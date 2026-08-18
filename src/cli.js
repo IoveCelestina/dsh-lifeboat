@@ -20,6 +20,8 @@ Diagnose options:
   --success-window MS         Runtime duration considered a healthy boot
   --boot-confirmations N      Fresh isolated attempts per runtime probe (default: 2)
   --max-candidates N          Maximum automatic isolation candidates (default: 128)
+  --max-exact-removals N      Exact recovery search depth (default: 2)
+  --max-recovery-probes N     Logical recovery-search probe budget
   --allow-runtime-code-execution
                                Required for --mode boot
   --keep-artifacts            Preserve the isolated probe home
@@ -48,6 +50,8 @@ function parse(argv) {
     else if (flag === '--success-window') options.successWindowMs = Number(take(flag))
     else if (flag === '--boot-confirmations') options.bootConfirmations = Number(take(flag))
     else if (flag === '--max-candidates') options.maxCandidateBundles = Number(take(flag))
+    else if (flag === '--max-exact-removals') options.maxExactRemovalSize = Number(take(flag))
+    else if (flag === '--max-recovery-probes') options.maxRecoveryProbes = Number(take(flag))
     else if (flag === '--port') options.port = Number(take(flag))
     else if (flag === '--state-dir') options.stateDir = take(flag)
     else if (flag === '--max-concurrent') options.maxConcurrentJobs = Number(take(flag))
@@ -118,6 +122,8 @@ async function main() {
     successWindowMs: options.successWindowMs,
     bootConfirmations: options.bootConfirmations,
     maxCandidateBundles: options.maxCandidateBundles,
+    maxExactRemovalSize: options.maxExactRemovalSize,
+    maxRecoveryProbes: options.maxRecoveryProbes,
     keepArtifacts: options.keepArtifacts,
     allowRuntimeCodeExecution: options.allowRuntimeCodeExecution,
   }, {
