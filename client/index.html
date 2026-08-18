@@ -81,6 +81,20 @@
                 <input id="window-input" type="number" min="500" max="60000" step="500" value="8000">
               </label>
             </div>
+            <div class="number-pair">
+              <label class="field">
+                <span>候选上限 <em>Bundle</em></span>
+                <input id="max-candidates-input" type="number" min="1" max="512" step="1" value="128">
+              </label>
+              <label class="field">
+                <span>精确删除深度 <em>默认 2</em></span>
+                <input id="max-exact-removals-input" type="number" min="1" max="8" step="1" value="2">
+              </label>
+            </div>
+            <label class="field">
+              <span>恢复探测预算 <em>配置 256 / 启动 64</em></span>
+              <input id="max-recovery-probes-input" type="number" min="1" max="4096" step="1" value="256">
+            </label>
             <label class="field boot-only" hidden>
               <span>重复确认 <em>每个候选集合</em></span>
               <input id="confirmations-input" type="number" min="1" max="5" step="1" value="2">

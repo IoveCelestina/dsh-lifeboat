@@ -9,6 +9,9 @@ const elements = {
   timeout: document.querySelector('#timeout-input'),
   window: document.querySelector('#window-input'),
   confirmations: document.querySelector('#confirmations-input'),
+  maxCandidates: document.querySelector('#max-candidates-input'),
+  maxExactRemovals: document.querySelector('#max-exact-removals-input'),
+  maxRecoveryProbes: document.querySelector('#max-recovery-probes-input'),
   keepArtifacts: document.querySelector('#keep-artifacts'),
   runtimeAck: document.querySelector('#runtime-ack'),
   start: document.querySelector('#start-button'),
@@ -83,6 +86,7 @@ function updateMode() {
   const boot = elements.form.elements.mode.value === 'boot'
   document.querySelectorAll('.boot-only').forEach(element => { element.hidden = !boot })
   elements.timeout.value = boot ? '20000' : '60000'
+  elements.maxRecoveryProbes.value = boot ? '64' : '256'
 }
 
 function statusLabel(status) {
@@ -309,6 +313,9 @@ elements.form.addEventListener('submit', async event => {
         timeoutMs: Number(elements.timeout.value),
         successWindowMs: Number(elements.window.value),
         bootConfirmations: Number(elements.confirmations.value),
+        maxCandidateBundles: Number(elements.maxCandidates.value),
+        maxExactRemovalSize: Number(elements.maxExactRemovals.value),
+        maxRecoveryProbes: Number(elements.maxRecoveryProbes.value),
         keepArtifacts: elements.keepArtifacts.checked,
         allowRuntimeCodeExecution: mode === 'boot' && elements.runtimeAck.checked,
       }),

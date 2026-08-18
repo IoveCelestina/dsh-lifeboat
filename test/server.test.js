@@ -14,6 +14,7 @@ test('serves the rescue UI and completes a token-protected diagnosis job', async
     const pageText = await page.text()
     assert.match(pageText, /DSH Lifeboat/)
     assert.match(pageText, /id="recovery-plans"/)
+    assert.match(pageText, /id="max-recovery-probes-input"/)
 
     const bootstrap = await (await fetch(`${lifeboat.url}api/bootstrap`)).json()
     const denied = await fetch(`${lifeboat.url}api/jobs`, {
@@ -49,6 +50,9 @@ test('serves the rescue UI and completes a token-protected diagnosis job', async
         profile: fixture.profile,
         command: process.execPath,
         commandArgs: ['-e', 'process.exit(0)', '--'],
+        maxCandidateBundles: 7,
+        maxExactRemovalSize: 3,
+        maxRecoveryProbes: 11,
       }),
     })
     assert.equal(createdResponse.status, 202)
@@ -59,6 +63,9 @@ test('serves the rescue UI and completes a token-protected diagnosis job', async
     }
     assert.equal(job.status, 'completed')
     assert.equal(job.report.finding.code, 'healthy')
+    assert.equal(job.report.options.maxCandidateBundles, 7)
+    assert.equal(job.report.options.maxExactRemovalSize, 3)
+    assert.equal(job.report.options.maxRecoveryProbes, 11)
     assert.equal(job.reportSaved, true)
 
     const health = await (await fetch(`${lifeboat.url}api/health`)).json()
