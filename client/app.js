@@ -30,6 +30,8 @@ const elements = {
   evidence: document.querySelector('#evidence-body'),
   download: document.querySelector('#download-button'),
   recovery: document.querySelector('#recovery-panel'),
+  recoverySummary: document.querySelector('#recovery-summary'),
+  recoveryPlans: document.querySelector('#recovery-plans'),
   apply: document.querySelector('#apply-button'),
   restore: document.querySelector('#restore-button'),
   warnings: document.querySelector('#warning-list'),
@@ -39,7 +41,7 @@ const elements = {
   toast: document.querySelector('#toast'),
 }
 
-const state = { token: '', job: null, pollTimer: null, toastTimer: null }
+const state = { token: '', job: null, pollTimer: null, toastTimer: null, selectedPlanId: null }
 
 function lines(value) {
   return value.split(/\r?\n/).map(item => item.trim()).filter(Boolean)
@@ -136,6 +138,58 @@ function renderEvidence(probes) {
   }))
 }
 
+function availableRecoveryPlans(recovery) {
+  if (Array.isArray(recovery?.plans) && recovery.plans.length > 0) return recovery.plans
+  if (recovery?.bundles?.length) {
+    return [{
+      id: recovery.selectedPlanId ?? 'legacy-recovery',
+      bundles: recovery.bundles,
+      optimality: 'verified',
+    }]
+  }
+  return []
+}
+
+function renderRecovery(recovery) {
+  const plans = availableRecoveryPlans(recovery)
+  if (!plans.some(plan => plan.id === state.selectedPlanId)) {
+    const preferred = plans.find(plan => plan.id === recovery?.selectedPlanId)
+    state.selectedPlanId = preferred?.id ?? plans[0]?.id ?? null
+  }
+  elements.recoverySummary.textContent = plans.length > 1
+    ? `找到 ${plans.length} 个相同删除数量的恢复方案；选择希望保留另一侧插件的方案。`
+    : '该方案已经在全新临时 Home 中使用完整 Profile 独立复验通过。'
+  elements.recoveryPlans.replaceChildren(...plans.map((plan, index) => {
+    const label = document.createElement('label')
+    const radio = document.createElement('input')
+    const content = document.createElement('span')
+    const title = document.createElement('strong')
+    const detail = document.createElement('small')
+    const badge = document.createElement('span')
+    label.className = 'recovery-plan'
+    radio.type = 'radio'
+    radio.name = 'recovery-plan'
+    radio.value = plan.id
+    radio.checked = plan.id === state.selectedPlanId
+    radio.disabled = Boolean(state.job?.recoveryApplied)
+    radio.setAttribute('aria-label', `停用 ${plan.bundles.join('、')}`)
+    radio.addEventListener('change', () => { state.selectedPlanId = plan.id })
+    title.textContent = `停用 ${plan.bundles.join('、')}`
+    detail.textContent = plan.verificationProbeId
+      ? `完整 Profile 复验：${plan.verificationProbeId}`
+      : '兼容旧版已验证恢复报告'
+    badge.className = 'recovery-plan-badge'
+    badge.textContent = plan.optimality === 'exact'
+      ? '精确最小'
+      : plan.optimality === 'one-minimal' ? '不可再缩减' : '已验证'
+    content.append(title, detail)
+    label.append(radio, content, badge)
+    label.dataset.index = String(index)
+    return label
+  }))
+  elements.apply.disabled = plans.length === 0 || Boolean(state.job?.recoveryApplied)
+}
+
 function renderFinding(report) {
   const finding = report?.finding
   if (!finding) return
@@ -152,6 +206,7 @@ function renderFinding(report) {
     ? 'healthy'
     : report.recovery ? 'recovery' : 'failure'
   elements.recovery.hidden = !report.recovery
+  if (report.recovery) renderRecovery(report.recovery)
   elements.download.disabled = false
   if (report.warnings?.length) {
     elements.warnings.hidden = false
@@ -177,6 +232,7 @@ function renderJob(job) {
   elements.runState.dataset.state = job.status
   elements.sonar.dataset.state = job.status
   const report = job.report
+  if (job.recoveryApplied?.planId) state.selectedPlanId = job.recoveryApplied.planId
   const probes = report?.probes ?? []
   const started = [...job.events].reverse().find(event => event.type === 'probe-started')
   elements.probeCount.textContent = String(probes.length)
@@ -190,7 +246,7 @@ function renderJob(job) {
   if (report) renderFinding(report)
   if (job.recoveryApplied) {
     elements.apply.disabled = true
-    elements.apply.textContent = '已停用故障 Bundle'
+    elements.apply.textContent = '已应用所选恢复方案'
     elements.restore.hidden = false
   }
   if (job.recoveryRestored) {
@@ -228,8 +284,13 @@ elements.home.addEventListener('change', refreshProfiles)
 elements.form.addEventListener('submit', async event => {
   event.preventDefault()
   elements.start.disabled = true
+  state.selectedPlanId = null
+  elements.apply.disabled = false
+  elements.apply.textContent = '应用所选恢复方案'
   elements.recovery.hidden = true
   elements.restore.hidden = true
+  elements.restore.disabled = false
+  elements.restore.textContent = '撤销本次恢复'
   elements.warnings.hidden = true
   try {
     const mode = elements.form.elements.mode.value
@@ -280,7 +341,13 @@ elements.download.addEventListener('click', () => {
 })
 
 elements.apply.addEventListener('click', () => {
-  const bundles = state.job?.report?.recovery?.bundles ?? []
+  const recovery = state.job?.report?.recovery
+  const plan = availableRecoveryPlans(recovery).find(candidate => candidate.id === state.selectedPlanId)
+  if (!plan) {
+    showToast('请先选择一个经过验证的恢复方案。')
+    return
+  }
+  const bundles = plan.bundles
   elements.dialogBundles.replaceChildren(...bundles.map(bundle => {
     const chip = document.createElement('div')
     chip.className = 'bundle-chip'
@@ -294,7 +361,10 @@ elements.dialog.addEventListener('close', async () => {
   if (elements.dialog.returnValue !== 'confirm' || !state.job) return
   elements.apply.disabled = true
   try {
-    const result = await api(`/api/jobs/${state.job.id}/apply`, { method: 'POST', body: '{}' })
+    const result = await api(`/api/jobs/${state.job.id}/apply`, {
+      method: 'POST',
+      body: JSON.stringify({ planId: state.selectedPlanId }),
+    })
     showToast(`已创建备份并停用 ${result.disabledBundles.length} 个 Bundle。`)
     await pollJob(state.job.id)
   } catch (error) {
