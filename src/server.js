@@ -5,7 +5,7 @@ import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { applyRecovery, restoreRecovery } from './recovery.js'
 import { diagnoseProfile } from './diagnose.js'
-import { listProfiles, readProfile, resolveDshHome } from './manifest.js'
+import { listProfiles, resolveDshHome } from './manifest.js'
 import { createReportStore } from './report-store.js'
 import { VERSION } from './version.js'
 
@@ -458,8 +458,6 @@ export async function createLifeboatServer(options = {}) {
               job.recoveryApplied.planId = plan.id
               job.recoveryApplied.optimality = plan.optimality
               job.recoveryApplied.verificationProbeId = plan.verificationProbeId
-              const updated = await readProfile(job.report.options.home, job.report.options.profile)
-              job.recoveryApplied.currentManifestHash = updated.hash
               await persistJob(job)
               sendJson(response, 200, job.recoveryApplied)
               return

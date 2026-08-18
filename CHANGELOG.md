@@ -10,6 +10,7 @@ All notable changes to DSH Lifeboat are documented here. The project follows Sem
 - Return equally small verified alternatives and let operators choose one in the Web UI; bind writes to the server-owned plan ID.
 - Expose candidate, exact-depth, and recovery-probe limits in the advanced UI and CLI/API report options.
 - Remove the obsolete failure-subset minimizer so the codebase exposes only the recovery-plan semantics.
+- Derive the post-recovery manifest hash from the exact bytes atomically written, keeping restore guards complete without a second file read.
 
 ## 0.1.0 - 2026-08-18
 

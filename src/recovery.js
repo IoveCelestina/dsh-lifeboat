@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
 import { copyFile, mkdir, rename, unlink, writeFile } from 'node:fs/promises'
 import { basename, dirname, join, relative, sep } from 'node:path'
-import { readProfile } from './manifest.js'
+import { readProfile, sha256 } from './manifest.js'
 
 function assertChild(parent, target) {
   const rel = relative(parent, target)
@@ -31,12 +31,13 @@ export async function applyRecovery(options) {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-')
   const backupPath = join(backupDir, `package.${stamp}.${profile.hash.slice(0, 12)}.json`)
   const temporaryPath = join(profile.dir, `.package.lifeboat-${randomUUID()}.tmp`)
+  const serialized = `${JSON.stringify(next, null, 2)}\n`
   assertChild(profile.dir, backupPath)
   assertChild(profile.dir, temporaryPath)
 
   await copyFile(profile.manifestPath, backupPath, constants.COPYFILE_EXCL)
   try {
-    await writeFile(temporaryPath, `${JSON.stringify(next, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' })
+    await writeFile(temporaryPath, serialized, { encoding: 'utf8', flag: 'wx' })
     await rename(temporaryPath, profile.manifestPath)
   } catch (error) {
     try {
@@ -51,6 +52,7 @@ export async function applyRecovery(options) {
     disabledBundles: disabled,
     backupPath,
     manifestPath: profile.manifestPath,
+    currentManifestHash: sha256(serialized),
   }
 }
 
