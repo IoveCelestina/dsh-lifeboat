@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { classifyBundles, readProfile } from './manifest.js'
-import { minimizeFailingSet } from './minimize.js'
 import { runProbe } from './probe.js'
+import { findRecoveryPlans } from './recovery-search.js'
 import { createProbeWorkspace } from './workspace.js'
 
 function abortError() {
@@ -40,6 +40,14 @@ function validateOptions(options) {
   if (options.maxCandidateBundles !== undefined
     && (!Number.isInteger(options.maxCandidateBundles) || options.maxCandidateBundles < 1 || options.maxCandidateBundles > 512)) {
     throw new Error('maxCandidateBundles must be an integer between 1 and 512.')
+  }
+  if (options.maxExactRemovalSize !== undefined
+    && (!Number.isInteger(options.maxExactRemovalSize) || options.maxExactRemovalSize < 1 || options.maxExactRemovalSize > 8)) {
+    throw new Error('maxExactRemovalSize must be an integer between 1 and 8.')
+  }
+  if (options.maxRecoveryProbes !== undefined
+    && (!Number.isInteger(options.maxRecoveryProbes) || options.maxRecoveryProbes < 1 || options.maxRecoveryProbes > 4_096)) {
+    throw new Error('maxRecoveryProbes must be an integer between 1 and 4096.')
   }
 }
 
@@ -94,6 +102,8 @@ export async function diagnoseProfile(options, dependencies = {}) {
       bootArgs: options.bootArgs ?? [],
       bootConfirmations: options.mode === 'boot' ? options.bootConfirmations ?? 2 : 1,
       maxCandidateBundles: options.maxCandidateBundles ?? 128,
+      maxExactRemovalSize: options.maxExactRemovalSize ?? 2,
+      maxRecoveryProbes: options.maxRecoveryProbes ?? (options.mode === 'boot' ? 64 : 256),
       allowRuntimeCodeExecution: options.allowRuntimeCodeExecution === true,
     },
     profile: {
@@ -135,11 +145,11 @@ export async function diagnoseProfile(options, dependencies = {}) {
     return profile.bundles.filter(bundle => active.has(bundle))
   }
 
-  const probe = async ({ bundles, profilePatch, homePatch, label }) => {
+  const probe = async ({ bundles, profilePatch, homePatch, label, force = false }) => {
     if (options.signal?.aborted) throw abortError()
     const key = JSON.stringify([bundles, profilePatch, homePatch, options.mode ?? 'config'])
     const cached = cache.get(key)
-    if (cached) {
+    if (cached && !force) {
       emit({ type: 'probe-cache-hit', label, probeId: cached.id })
       return cached
     }
@@ -199,7 +209,7 @@ export async function diagnoseProfile(options, dependencies = {}) {
           attempts,
         }
     const record = { id, label, bundles: [...bundles], profilePatch, homePatch, ...result }
-    cache.set(key, record)
+    if (!force) cache.set(key, record)
     report.probes.push(record)
     emit({ type: 'probe-finished', id, label, status: result.status, reason: result.reason })
     return record
@@ -209,6 +219,80 @@ export async function diagnoseProfile(options, dependencies = {}) {
     if (result.status === 'unstable') throw inconclusiveError(result)
     return result.status === 'fail'
   }
+
+  const findVerifiedRecovery = async ({ profilePatch, homePatch, interaction }) => {
+    const searchResult = await findRecoveryPlans(
+      suspects,
+      async removed => {
+        const removedSet = new Set(removed)
+        const remaining = suspects.filter(bundle => !removedSet.has(bundle))
+        const result = await probe({
+          bundles: compose(remaining),
+          profilePatch,
+          homePatch,
+          label: `Recovery search: disable ${removed.join(', ') || '(none)'}`,
+        })
+        return !fails(result)
+      },
+      {
+        allRemovedRecovers: true,
+        maxExactRemovalSize: options.maxExactRemovalSize ?? 2,
+        maxTests: options.maxRecoveryProbes ?? (options.mode === 'boot' ? 64 : 256),
+        onStep: step => emit({ type: 'recovery-search-step', ...step }),
+      },
+    )
+
+    const plans = []
+    for (const plan of searchResult.plans) {
+      const removedSet = new Set(plan.bundles)
+      const remaining = suspects.filter(bundle => !removedSet.has(bundle))
+      const verification = await probe({
+        bundles: compose(remaining),
+        profilePatch,
+        homePatch,
+        label: `Recovery verification: disable ${plan.bundles.join(', ')}`,
+        force: true,
+      })
+      if (!fails(verification)) plans.push({ ...plan, verificationProbeId: verification.id })
+    }
+
+    if (plans.length === 0) {
+      report.finding = {
+        code: searchResult.search.exhausted ? 'recovery-search-exhausted' : 'recovery-verification-failed',
+        title: searchResult.search.exhausted
+          ? 'Recovery search reached its probe budget'
+          : 'No recovery plan passed independent verification',
+        summary: searchResult.search.exhausted
+          ? 'Lifeboat reproduced a bundle-related failure but will not apply an unverified or incompletely minimized removal set. Raise the recovery probe budget or narrow the profile.'
+          : 'Candidate removals did not pass a fresh full-profile verification, so Lifeboat will not modify the profile.',
+      }
+      report.recoverySearch = searchResult.search
+      return
+    }
+
+    const primary = plans[0]
+    const exact = primary.optimality === 'exact'
+    report.finding = {
+      code: interaction ? 'plugin-patch-interaction' : 'plugin-set',
+      title: exact ? 'Minimum-cardinality bundle recovery verified' : 'One-minimal bundle recovery verified',
+      summary: interaction
+        ? `Disabling ${primary.bundles.join(', ')} made the complete profile pass with both user patch layers enabled.`
+        : `Disabling ${primary.bundles.join(', ')} made the complete bundle composition pass without either user patch layer.`,
+      bundles: primary.bundles,
+    }
+    report.recovery = {
+      action: 'disable-bundles',
+      bundles: primary.bundles,
+      selectedPlanId: primary.id,
+      plans,
+      search: searchResult.search,
+      manifestHash: profile.hash,
+      note: exact
+        ? 'Every smaller removal cardinality was tested. Installed dependencies are retained.'
+        : 'This verified plan is 1-minimal but may not be the globally smallest removal. Installed dependencies are retained.',
+    }
+  }
+
   try {
     const baseline = await probe({
       bundles: profile.bundles,
@@ -239,30 +323,7 @@ export async function diagnoseProfile(options, dependencies = {}) {
           label: 'Installation bundles only',
         })
         if (!fails(protectedClean) && suspects.length > 0) {
-          const minimum = await minimizeFailingSet(
-            suspects,
-            async selected => fails(await probe({
-              bundles: compose(selected),
-              profilePatch: false,
-              homePatch: false,
-              label: `Candidate set: ${selected.join(', ') || '(none)'}`,
-            })),
-            step => emit({ type: 'minimize-step', ...step }),
-          )
-          report.finding = {
-            code: 'plugin-set',
-            title: minimum.length === 1 ? 'One bundle reproduces the failure' : 'Minimal bundle combination found',
-            summary: minimum.length === 1
-              ? `${minimum[0]} fails without either user patch layer.`
-              : `These ${minimum.length} bundles fail together; removing any one from this set made the tested subset pass.`,
-            bundles: minimum,
-          }
-          report.recovery = {
-            action: 'disable-bundles',
-            bundles: minimum,
-            manifestHash: profile.hash,
-            note: 'This removes the bundles from dsh.profile.bundles but keeps their installed dependencies.',
-          }
+          await findVerifiedRecovery({ profilePatch: false, homePatch: false, interaction: false })
         } else {
           report.finding = {
             code: 'core-or-environment',
@@ -280,28 +341,7 @@ export async function diagnoseProfile(options, dependencies = {}) {
           label: 'Installation bundles with both user patches',
         })
         if (!fails(protectedPatched) && suspects.length > 0) {
-          const minimum = await minimizeFailingSet(
-            suspects,
-            async selected => fails(await probe({
-              bundles: compose(selected),
-              profilePatch: true,
-              homePatch: true,
-              label: `Patch interaction candidate: ${selected.join(', ') || '(none)'}`,
-            })),
-            step => emit({ type: 'minimize-step', ...step }),
-          )
-          report.finding = {
-            code: 'plugin-patch-interaction',
-            title: 'Bundle and user-patch interaction found',
-            summary: `The bundles pass without user patches. The smallest reproduced interaction contains ${minimum.length} bundle(s).`,
-            bundles: minimum,
-          }
-          report.recovery = {
-            action: 'disable-bundles',
-            bundles: minimum,
-            manifestHash: profile.hash,
-            note: 'This is a recovery action, not proof that the bundle alone is defective.',
-          }
+          await findVerifiedRecovery({ profilePatch: true, homePatch: true, interaction: true })
         } else {
           const profileOnly = await probe({
             bundles: profile.bundles,

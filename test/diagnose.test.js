@@ -18,14 +18,78 @@ test('diagnosis isolates one failing community bundle', async () => {
   }
 })
 
-test('diagnosis preserves a minimal pair conflict', async () => {
+test('diagnosis turns a pair interaction into exact single-bundle recovery alternatives', async () => {
   const fixture = await profileFixture()
   try {
     const report = await diagnoseProfile({ home: fixture.home, profile: fixture.profile }, {
       probeRunner: fakeProbe(({ bundles }) => bundles.includes('alpha') && bundles.includes('gamma')),
     })
     assert.equal(report.finding.code, 'plugin-set')
-    assert.deepEqual(report.finding.bundles, ['alpha', 'gamma'])
+    assert.deepEqual(report.finding.bundles, ['alpha'])
+    assert.deepEqual(report.recovery.bundles, ['alpha'])
+    assert.deepEqual(report.recovery.plans.map(plan => plan.bundles), [['alpha'], ['gamma']])
+    assert.ok(report.recovery.plans.every(plan => plan.optimality === 'exact'))
+    assert.ok(report.recovery.plans.every(plan => plan.verificationProbeId))
+  } finally {
+    await fixture.cleanup()
+  }
+})
+
+test('diagnosis removes both independently failing bundles and preserves unrelated ones', async () => {
+  const fixture = await profileFixture()
+  try {
+    const report = await diagnoseProfile({ home: fixture.home, profile: fixture.profile }, {
+      probeRunner: fakeProbe(({ bundles }) => bundles.includes('alpha') || bundles.includes('gamma')),
+    })
+    assert.equal(report.finding.code, 'plugin-set')
+    assert.deepEqual(report.recovery.bundles, ['alpha', 'gamma'])
+    assert.equal(report.recovery.plans[0].optimality, 'exact')
+    const verification = report.probes.find(probe => probe.id === report.recovery.plans[0].verificationProbeId)
+    assert.ok(verification)
+    assert.ok(verification.bundles.includes('beta'))
+    assert.ok(!verification.bundles.includes('alpha'))
+    assert.ok(!verification.bundles.includes('gamma'))
+  } finally {
+    await fixture.cleanup()
+  }
+})
+
+test('diagnosis withholds recovery when the removal search exhausts its budget', async () => {
+  const fixture = await profileFixture()
+  try {
+    const report = await diagnoseProfile({
+      home: fixture.home,
+      profile: fixture.profile,
+      maxRecoveryProbes: 1,
+    }, {
+      probeRunner: fakeProbe(({ bundles }) => bundles.includes('alpha') || bundles.includes('gamma')),
+    })
+    assert.equal(report.finding.code, 'recovery-search-exhausted')
+    assert.equal(report.recovery, undefined)
+    assert.equal(report.recoverySearch.exhausted, true)
+  } finally {
+    await fixture.cleanup()
+  }
+})
+
+test('diagnosis withholds a plan that fails an independent full-profile verification', async () => {
+  const fixture = await profileFixture()
+  let candidateAttempts = 0
+  try {
+    const report = await diagnoseProfile({ home: fixture.home, profile: fixture.profile }, {
+      probeRunner: fakeProbe(({ bundles }) => {
+        const community = bundles.filter(bundle => !bundle.startsWith('@deepseek-ai/'))
+        if (community.length === 0) return false
+        if (community.includes('alpha')) return true
+        if (community.join(',') === 'beta,gamma') {
+          candidateAttempts += 1
+          return candidateAttempts > 1
+        }
+        return false
+      }),
+    })
+    assert.equal(report.finding.code, 'recovery-verification-failed')
+    assert.equal(report.recovery, undefined)
   } finally {
     await fixture.cleanup()
   }
