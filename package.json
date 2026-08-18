@@ -1,6 +1,6 @@
 {
   "name": "dsh-lifeboat",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Out-of-process safe boot, failure isolation, and recovery UI for DeepSeek Harness profiles.",
   "author": {
     "name": "Taohu",
@@ -40,7 +40,7 @@
     "start": "node ./src/cli.js serve",
     "diagnose": "node ./src/cli.js diagnose",
     "test": "node --test",
-    "check:syntax": "node --check ./src/cli.js && node --check ./src/diagnose.js && node --check ./src/manifest.js && node --check ./src/minimize.js && node --check ./src/plugin.js && node --check ./src/probe.js && node --check ./src/recovery.js && node --check ./src/recovery-search.js && node --check ./src/report-store.js && node --check ./src/server.js && node --check ./src/version.js && node --check ./src/workspace.js && node --check ./client/app.js",
+    "check:syntax": "node --check ./src/cli.js && node --check ./src/diagnose.js && node --check ./src/manifest.js && node --check ./src/plugin.js && node --check ./src/probe.js && node --check ./src/recovery.js && node --check ./src/recovery-search.js && node --check ./src/report-store.js && node --check ./src/server.js && node --check ./src/version.js && node --check ./src/workspace.js && node --check ./client/app.js",
     "check": "npm run check:syntax && npm test",
     "prepack": "npm run check"
   },

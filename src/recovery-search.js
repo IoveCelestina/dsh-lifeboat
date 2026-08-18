@@ -208,7 +208,7 @@ export async function findRecoveryPlans(items, recovers, options = {}) {
       budget: maxTests,
       exactBudget,
       exactThrough,
-      alternativesComplete: true,
+      alternativesComplete: false,
       exhausted: false,
     },
   }

@@ -21,7 +21,7 @@ Diagnose options:
   --boot-confirmations N      Fresh isolated attempts per runtime probe (default: 2)
   --max-candidates N          Maximum automatic isolation candidates (default: 128)
   --max-exact-removals N      Exact recovery search depth (default: 2)
-  --max-recovery-probes N     Logical recovery-search probe budget
+  --max-recovery-probes N     Recovery-search budget (config: 256; boot: 64)
   --allow-runtime-code-execution
                                Required for --mode boot
   --keep-artifacts            Preserve the isolated probe home

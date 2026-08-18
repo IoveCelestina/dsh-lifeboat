@@ -42,6 +42,7 @@ test('falls back to a one-minimal verified removal set', async () => {
   )
   assert.deepEqual(result.plans[0].bundles, ['alpha', 'gamma'])
   assert.equal(result.plans[0].optimality, 'one-minimal')
+  assert.equal(result.search.alternativesComplete, false)
 })
 
 test('does not return a recovery when the search budget expires', async () => {

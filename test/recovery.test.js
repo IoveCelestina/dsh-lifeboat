@@ -18,6 +18,7 @@ test('recovery creates a backup, disables only findings, and can be restored', a
     })
     const after = await readProfile(fixture.home, fixture.profile)
     assert.deepEqual(after.bundles, ['@deepseek-ai/dsh-base', 'alpha', 'gamma'])
+    assert.equal(applied.currentManifestHash, after.hash)
     assert.equal(JSON.parse(await readFile(applied.backupPath, 'utf8')).dsh.profile.bundles.includes('beta'), true)
 
     await restoreRecovery({

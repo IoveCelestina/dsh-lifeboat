@@ -198,6 +198,7 @@ test('applies only the recovery plan selected from the verified report', async (
     assert.equal(applied.planId, 'recovery-2')
     assert.deepEqual(applied.disabledBundles, ['gamma'])
     const updated = await readProfile(fixture.home, fixture.profile)
+    assert.equal(applied.currentManifestHash, updated.hash)
     assert.ok(updated.bundles.includes('alpha'))
     assert.ok(!updated.bundles.includes('gamma'))
 

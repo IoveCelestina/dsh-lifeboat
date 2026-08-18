@@ -10,8 +10,12 @@ The HTTP service is loopback-only. Keep it under the same user account that owns
 - Default concurrency: one diagnosis; raise only when the machine can absorb multiple Harness starts.
 - Default job deadline: 30 minutes; override with `--job-timeout MS` (maximum: 6 hours).
 - Automatic isolation stops at 128 candidate bundles by default; raise `--max-candidates` only after reviewing the profile.
+- Recovery search tests exact removal cardinalities through depth 2 by default; set `--max-exact-removals N` from 1 to 8 for CLI diagnoses or use the Web UI's advanced controls.
+- The logical recovery-search budget defaults to 256 probes in config mode and 64 in boot mode; set `--max-recovery-probes N` from 1 to 4096 or use the Web UI. Reaching the limit suppresses automatic recovery rather than returning a partially minimized plan.
 
 The health endpoint returns `503` while the service is stopping. Reports are written atomically and contain local paths and captured plugin output, so the state directory should remain private to the service user. Lifeboat does not automatically delete persisted reports; rotate that directory with an explicit user-owned retention policy.
+
+Increasing the exact depth raises the number of possible combinations as `C(n,1) + ... + C(n,k)`. The probe budget remains a hard cap, so prefer narrowing the Profile before raising both controls.
 
 ## systemd user unit
 

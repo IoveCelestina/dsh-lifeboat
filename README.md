@@ -8,12 +8,12 @@ DSH Lifeboat is an out-of-process recovery console for DeepSeek Harness profiles
 
 ## What is included
 
-- A loopback-only Web UI at `127.0.0.1` with live probe progress, evidence, report download, recovery confirmation, and one-step undo.
+- A loopback-only Web UI at `127.0.0.1` with live probe progress, evidence, verified recovery-plan selection, report download, and one-step undo.
 - A CLI mode that emits the same `dsh-lifeboat/v1` JSON report without the UI.
 - Config probes using `dsh --profile <name> --dump-config`.
 - Optional runtime probes that treat a clean exit or survival through a configurable startup window as a successful boot.
 - Fresh temporary homes for every probe attempt; runtime results are confirmed twice by default and mixed evidence never enables recovery.
-- Delta debugging over out-of-tree bundles, including minimal multi-plugin conflict sets.
+- Bounded removal-set search over the complete Profile: exact minimum-cardinality plans at shallow depths, followed by a verified 1-minimal fallback.
 - Separate checks for profile-level and Harness-home `cordis.patch.yml` failures.
 - Optimistic manifest hashing, timestamped backups, and atomic recovery writes.
 - A bounded diagnosis queue, graceful process shutdown, `GET /api/health`, browser-session reconnect, and atomically persisted reports.
@@ -38,6 +38,7 @@ node ./src/cli.js diagnose --profile web
 node ./src/cli.js diagnose --profile web --json
 node ./src/cli.js diagnose --profile web --mode boot --allow-runtime-code-execution
 node ./src/cli.js diagnose --profile web --mode boot --boot-confirmations 3 --allow-runtime-code-execution
+node ./src/cli.js diagnose --profile web --max-exact-removals 2 --max-recovery-probes 256
 ```
 
 When `dsh` is run from a Harness source checkout, use safe executable-plus-argument fields instead of a shell command string:
@@ -55,10 +56,10 @@ On PowerShell, quote any argument beginning with `--` when necessary.
 
 ## Install as a Harness bundle
 
-Install the pinned v0.1.0 release directly through Harness:
+Install the pinned v0.1.1 release directly through Harness:
 
 ```sh
-dsh plugin --profile web add https://github.com/IoveCelestina/dsh-lifeboat/releases/download/v0.1.0/dsh-lifeboat-0.1.0.tgz
+dsh plugin --profile web add https://github.com/IoveCelestina/dsh-lifeboat/releases/download/v0.1.1/dsh-lifeboat-0.1.1.tgz
 ```
 
 For a local checkout, run this from its parent directory instead:
@@ -73,7 +74,7 @@ The package declares `dsh.bundle` through `cordis.patch.yml`. Installation adds 
 pnpm --dir "$DSH_HOME/profiles/web" exec dsh-lifeboat serve
 ```
 
-The v0.1.0 package is published as a GitHub Release asset, not on the npm registry. The release-tarball command above was exercised end to end against the current Harness CLI.
+Release packages are distributed as GitHub Release assets, not through the npm registry. Validate the tarball installation command above against the current Harness CLI before relying on it for an incident.
 
 ## How isolation works
 
@@ -82,21 +83,26 @@ The v0.1.0 package is published as a GitHub Release asset, not on the npm regist
 3. Every probe attempt receives a new direct child named `dsh-lifeboat-*` under the operating-system temp directory.
 4. Bounded regular profile assets are copied. Credential-bearing files and symlinked assets are skipped. Installed packages are exposed through absolute package-resolution links so pnpm's relative links remain valid in the temporary profile.
 5. The full composition is probed. If it fails, Lifeboat distinguishes clean bundle failures from user-patch failures.
-6. For a community-bundle failure, delta debugging tests subsets and complements until it finds a 1-minimal failing set.
-7. In runtime mode, inconsistent repeated attempts stop the diagnosis as `unstable-probe` without offering recovery.
-8. Each temporary directory is removed after all owned links are unlinked, unless `--keep-artifacts` was selected.
+6. For a community-bundle failure, Lifeboat tests removal sets while keeping every nonremoved Bundle active. It enumerates cardinalities from one through the configured exact depth. When one succeeds, every smaller cardinality has already been exhausted, so the plan has globally minimum removal cardinality.
+7. If the exact phase finds no plan, delta debugging shrinks the known-recovering "remove all candidates" set. The result is 1-minimal: re-adding any one removed Bundle loses the observed recovery, but a smaller nonlocal plan may exist.
+8. Every candidate plan is independently re-run in another fresh Home with the complete remaining Profile. Failed verification, unstable runtime evidence, or an exhausted search budget suppresses automatic recovery.
+9. In runtime mode, inconsistent repeated attempts stop the diagnosis as `unstable-probe` without offering recovery.
+10. Each temporary directory is removed after all owned links are unlinked, unless `--keep-artifacts` was selected.
 
-Lifeboat reports a minimal reproduced set, not moral blame. A two-bundle result means the combination failed under the selected probe; it does not prove either package is independently defective.
+The search never performs an unbounded `2^n` powerset walk. Exact depth `k` has up to `C(n,1) + ... + C(n,k)` candidates, but a hard logical-probe budget stops both exact and fallback phases. Defaults are depth 2 and 256 recovery probes in config mode or 64 in boot mode; the advanced UI and `--max-exact-removals` / `--max-recovery-probes` expose these limits.
+
+These are recovery plans, not moral blame. If A and B fail only when active together, Lifeboat can offer "disable A" and "disable B" as equal one-removal alternatives. If A and B fail independently, a verified plan must remove both. Reports distinguish `exact` from `one-minimal` and record whether all equal-size alternatives were enumerated.
 
 ## Recovery behavior
 
-“Apply recovery” is deliberately unavailable until the report contains a bundle finding. When confirmed, Lifeboat:
+“Apply recovery” is deliberately unavailable until the report contains an independently verified Bundle-removal plan. When confirmed, Lifeboat:
 
-1. re-reads the original manifest and rejects the write if its hash changed;
-2. saves the exact original file under `.lifeboat-backups/`;
-3. atomically replaces `package.json`, removing only the diagnosed bundles from `dsh.profile.bundles`;
-4. keeps package dependencies installed;
-5. exposes “Undo this recovery” for the same local server session.
+1. lets the operator choose among verified alternatives;
+2. resolves that `planId` from the server-owned diagnosis report and rejects arbitrary Bundle lists;
+3. re-reads the original manifest and rejects the write if its hash changed;
+4. saves the exact original file under `.lifeboat-backups/`;
+5. atomically replaces `package.json`, removing only the selected plan's Bundles from `dsh.profile.bundles` while keeping dependencies installed;
+6. exposes “Undo this recovery” for the same local server session.
 
 Running a later `dsh plugin` package-manager command may reconcile an installed bundle back into the active list. Remove or update the actual faulty dependency after recovery.
 
@@ -112,7 +118,7 @@ Running a later `dsh plugin` package-manager command may reconcile an installed 
 
 ## Relationship to dsh-guard
 
-Lifeboat was implemented independently. The closest listed community project, [`dsh-guard`](https://github.com/x2802490130-prog/dsh-guard), focuses on rolling snapshots and in-process rollback; its README explicitly notes that an in-process plugin cannot rescue a startup crash without an external launcher. Lifeboat focuses on an independent diagnostic service, fresh-home reproduction, minimal conflict isolation, and evidence-gated recovery. See the [non-ranking comparison](docs/community-overlap.md).
+Lifeboat was implemented independently. The closest listed community project, [`dsh-guard`](https://github.com/x2802490130-prog/dsh-guard), focuses on rolling snapshots and in-process rollback; its README explicitly notes that an in-process plugin cannot rescue a startup crash without an external launcher. Lifeboat focuses on an independent diagnostic service, fresh-home reproduction, verified bounded removal plans, and evidence-gated recovery. See the [non-ranking comparison](docs/community-overlap.md).
 
 ## Development
 

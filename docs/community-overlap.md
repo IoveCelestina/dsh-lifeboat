@@ -12,7 +12,7 @@ Lifeboat occupies the narrower out-of-process diagnosis boundary:
 | In-Harness management panel | Yes | No |
 | Starts independently of the Harness Loader | External launcher is required for boot rescue | Yes |
 | Fresh isolated Home for each probe | Not documented | Yes |
-| Automatic minimal failing bundle or interaction set | Not documented | Yes |
+| Verified bounded-minimum recovery removal plan | Not documented | Yes |
 | Evidence report before a guarded manifest edit | Different snapshot/rollback model | Yes |
 
-The tools can be complementary: snapshots protect known-good state, while Lifeboat tries to reproduce and minimize a current startup failure. This table describes documented behavior, not a quality ranking.
+The tools can be complementary: snapshots protect known-good state, while Lifeboat tries to reproduce a current startup failure and find a verified removal plan. This table describes documented behavior, not a quality ranking.
