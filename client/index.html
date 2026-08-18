@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>DSH Lifeboat</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="DSH Lifeboat 首页">
+      <span class="brand-mark" aria-hidden="true"><span></span></span>
+      <span>
+        <strong>DSH Lifeboat</strong>
+        <small>OUT-OF-PROCESS RECOVERY</small>
+      </span>
+    </a>
+    <div class="topbar-status" id="server-status">
+      <span class="status-light" aria-hidden="true"></span>
+      <span>本地救援服务</span>
+      <code>127.0.0.1</code>
+    </div>
+  </header>
+
+  <main class="console-layout">
+    <aside class="setup-column" aria-labelledby="setup-title">
+      <div class="section-heading">
+        <span class="coordinate">SETUP / 01</span>
+        <h1 id="setup-title">先隔离，再判断。</h1>
+        <p>读取原 Profile，在临时 Harness Home 中复现。开始诊断不会改动原文件。</p>
+      </div>
+
+      <form id="diagnose-form">
+        <label class="field">
+          <span>Harness Home</span>
+          <input id="home-input" name="home" type="text" autocomplete="off" spellcheck="false" required>
+        </label>
+
+        <label class="field">
+          <span>Profile</span>
+          <input id="profile-input" name="profile" type="text" value="web" list="profile-list" autocomplete="off" required>
+          <datalist id="profile-list"></datalist>
+        </label>
+
+        <fieldset class="mode-field">
+          <legend>探测方式</legend>
+          <label>
+            <input type="radio" name="mode" value="config" checked>
+            <span><strong>配置探测</strong><small>快速、确定，不真正启动服务</small></span>
+          </label>
+          <label>
+            <input type="radio" name="mode" value="boot">
+            <span><strong>启动探测</strong><small>进程存活窗口，用于运行期故障</small></span>
+          </label>
+        </fieldset>
+
+        <label class="field">
+          <span>DSH 可执行文件</span>
+          <input id="command-input" name="command" type="text" value="dsh" autocomplete="off" spellcheck="false" required>
+        </label>
+
+        <details class="advanced">
+          <summary>高级探测参数</summary>
+          <div class="advanced-grid">
+            <label class="field">
+              <span>命令前置参数 <em>每行一个</em></span>
+              <textarea id="command-args" rows="3" spellcheck="false" placeholder="例如使用源码：&#10;--dir&#10;C:\path\to\deepseek-harness&#10;dsh"></textarea>
+            </label>
+            <label class="field boot-only" hidden>
+              <span>启动参数 <em>每行一个</em></span>
+              <textarea id="boot-args" rows="3" spellcheck="false" placeholder="Web Profile 可使用：&#10;--port&#10;0"></textarea>
+            </label>
+            <div class="number-pair">
+              <label class="field">
+                <span>单次超时 <em>ms</em></span>
+                <input id="timeout-input" type="number" min="1000" max="300000" step="500" value="60000">
+              </label>
+              <label class="field boot-only" hidden>
+                <span>健康窗口 <em>ms</em></span>
+                <input id="window-input" type="number" min="500" max="60000" step="500" value="8000">
+              </label>
+            </div>
+            <label class="field boot-only" hidden>
+              <span>重复确认 <em>每个候选集合</em></span>
+              <input id="confirmations-input" type="number" min="1" max="5" step="1" value="2">
+            </label>
+            <label class="check-field">
+              <input id="keep-artifacts" type="checkbox">
+              <span>保留临时探测目录用于取证</span>
+            </label>
+            <div class="runtime-warning boot-only" hidden>
+              <p>启动探测会真正加载已安装插件。临时 Home 隔离配置和运行数据，但插件代码仍以当前 Windows 用户权限执行。</p>
+              <label class="check-field">
+                <input id="runtime-ack" type="checkbox">
+                <span>我确认执行已安装的插件代码</span>
+              </label>
+            </div>
+          </div>
+        </details>
+
+        <div class="safety-note">
+          <span class="safety-icon" aria-hidden="true">⌁</span>
+          <p><strong>原 manifest 与 Patch 默认只读。</strong>只有诊断完成后主动确认“应用恢复”，Lifeboat 才会先备份再停用故障 Bundle。</p>
+        </div>
+
+        <div class="form-actions">
+          <button class="primary-button" id="start-button" type="submit">
+            <span>开始隔离诊断</span><span aria-hidden="true">→</span>
+          </button>
+          <button class="quiet-button" id="cancel-button" type="button" hidden>停止诊断</button>
+        </div>
+      </form>
+    </aside>
+
+    <section class="scan-column" aria-labelledby="scan-title">
+      <div class="scan-header">
+        <div>
+          <span class="coordinate">ISOLATION / 02</span>
+          <h2 id="scan-title">故障集合扫描</h2>
+        </div>
+        <span class="run-state" id="run-state" data-state="idle">等待开始</span>
+      </div>
+
+      <div class="sonar-wrap" id="sonar" data-state="idle" aria-live="polite">
+        <div class="sonar-grid" aria-hidden="true">
+          <span class="ring ring-one"></span>
+          <span class="ring ring-two"></span>
+          <span class="ring ring-three"></span>
+          <span class="crosshair crosshair-x"></span>
+          <span class="crosshair crosshair-y"></span>
+          <span class="sweep"></span>
+          <span class="probe-dot dot-one"></span>
+          <span class="probe-dot dot-two"></span>
+          <span class="probe-dot dot-three"></span>
+        </div>
+        <div class="sonar-readout">
+          <small id="scan-kicker">NO ACTIVE PROBE</small>
+          <strong id="scan-count">0</strong>
+          <span id="scan-label">尚未运行探测</span>
+        </div>
+      </div>
+
+      <div class="instrument-row">
+        <div><span>候选 Bundle</span><strong id="suspect-count">—</strong></div>
+        <div><span>已完成探测</span><strong id="probe-count">0</strong></div>
+        <div><span>当前集合</span><strong id="current-size">—</strong></div>
+      </div>
+
+      <section class="trace-panel" aria-labelledby="trace-title">
+        <div class="panel-title">
+          <h3 id="trace-title">探测航迹</h3>
+          <span id="trace-caption">最近事件</span>
+        </div>
+        <ol class="trace-list" id="trace-list">
+          <li class="empty-trace"><span></span><p>开始后，这里会显示每次子集和补集探测。</p></li>
+        </ol>
+      </section>
+    </section>
+
+    <aside class="result-column" aria-labelledby="result-title">
+      <div class="section-heading compact">
+        <span class="coordinate">EVIDENCE / 03</span>
+        <h2 id="result-title">诊断结论</h2>
+      </div>
+
+      <section class="finding-card" id="finding-card" data-kind="empty">
+        <span class="finding-eyebrow" id="finding-code">NOT RUN</span>
+        <h3 id="finding-title">还没有证据</h3>
+        <p id="finding-summary">运行一次隔离诊断后，这里会说明问题来自 Bundle、用户 Patch，还是基础环境。</p>
+        <div class="bundle-list" id="bundle-list"></div>
+      </section>
+
+      <section class="evidence-panel">
+        <div class="panel-title">
+          <h3>探测证据</h3>
+          <button class="text-button" id="download-button" type="button" disabled>下载报告</button>
+        </div>
+        <div class="evidence-table-wrap">
+          <table>
+            <thead><tr><th>探测</th><th>集合</th><th>结果</th></tr></thead>
+            <tbody id="evidence-body">
+              <tr><td colspan="3" class="table-empty">暂无探测记录</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="recovery-panel" id="recovery-panel" hidden>
+        <span class="coordinate">RECOVERY READY</span>
+        <h3>可恢复启动</h3>
+        <p>先保存原 manifest，再把最小故障集合从 Bundle 顺序中移除。依赖仍保留，可随时还原。</p>
+        <button class="recovery-button" id="apply-button" type="button">备份并停用故障 Bundle</button>
+        <button class="quiet-button full" id="restore-button" type="button" hidden>撤销本次恢复</button>
+      </section>
+
+      <div class="warning-list" id="warning-list" hidden></div>
+    </aside>
+  </main>
+
+  <dialog id="confirm-dialog">
+    <form method="dialog" class="dialog-card">
+      <span class="coordinate">WRITE CONFIRMATION</span>
+      <h2>应用恢复方案？</h2>
+      <p>这会修改所选 Profile 的 <code>package.json</code>，但会先在 <code>.lifeboat-backups</code> 中创建副本。</p>
+      <div class="dialog-bundles" id="dialog-bundles"></div>
+      <div class="dialog-actions">
+        <button class="quiet-button" value="cancel">返回</button>
+        <button class="recovery-button" id="confirm-apply" value="confirm">备份并停用</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

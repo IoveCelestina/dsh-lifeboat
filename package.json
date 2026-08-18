@@ -1,0 +1,66 @@
+{
+  "name": "dsh-lifeboat",
+  "version": "0.1.0",
+  "description": "Out-of-process safe boot, failure isolation, and recovery UI for DeepSeek Harness profiles.",
+  "author": {
+    "name": "Taohu",
+    "url": "https://github.com/IoveCelestina"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/IoveCelestina/dsh-lifeboat.git"
+  },
+  "homepage": "https://github.com/IoveCelestina/dsh-lifeboat#readme",
+  "bugs": {
+    "url": "https://github.com/IoveCelestina/dsh-lifeboat/issues"
+  },
+  "type": "module",
+  "main": "./src/plugin.js",
+  "exports": {
+    ".": "./src/plugin.js",
+    "./diagnose": "./src/diagnose.js",
+    "./server": "./src/server.js"
+  },
+  "bin": {
+    "dsh-lifeboat": "./src/cli.js"
+  },
+  "files": [
+    "client",
+    "src",
+    "cordis.patch.yml",
+    "README.md",
+    "README.zh.md",
+    "screenshot.png",
+    "CHANGELOG.md",
+    "SECURITY.md",
+    "docs",
+    "LICENSE"
+  ],
+  "scripts": {
+    "start": "node ./src/cli.js serve",
+    "diagnose": "node ./src/cli.js diagnose",
+    "test": "node --test",
+    "check:syntax": "node --check ./src/cli.js && node --check ./src/diagnose.js && node --check ./src/manifest.js && node --check ./src/minimize.js && node --check ./src/plugin.js && node --check ./src/probe.js && node --check ./src/recovery.js && node --check ./src/report-store.js && node --check ./src/server.js && node --check ./src/version.js && node --check ./src/workspace.js && node --check ./client/app.js",
+    "check": "npm run check:syntax && npm test",
+    "prepack": "npm run check"
+  },
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh-plugin",
+    "diagnostics",
+    "safe-boot"
+  ],
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
