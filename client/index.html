@@ -81,6 +81,20 @@
                 <input id="window-input" type="number" min="500" max="60000" step="500" value="8000">
               </label>
             </div>
+            <div class="number-pair">
+              <label class="field">
+                <span>候选上限 <em>Bundle</em></span>
+                <input id="max-candidates-input" type="number" min="1" max="512" step="1" value="128">
+              </label>
+              <label class="field">
+                <span>精确删除深度 <em>默认 2</em></span>
+                <input id="max-exact-removals-input" type="number" min="1" max="8" step="1" value="2">
+              </label>
+            </div>
+            <label class="field">
+              <span>恢复探测预算 <em>配置 256 / 启动 64</em></span>
+              <input id="max-recovery-probes-input" type="number" min="1" max="4096" step="1" value="256">
+            </label>
             <label class="field boot-only" hidden>
               <span>重复确认 <em>每个候选集合</em></span>
               <input id="confirmations-input" type="number" min="1" max="5" step="1" value="2">
@@ -188,9 +202,10 @@
 
       <section class="recovery-panel" id="recovery-panel" hidden>
         <span class="coordinate">RECOVERY READY</span>
-        <h3>可恢复启动</h3>
-        <p>先保存原 manifest，再把最小故障集合从 Bundle 顺序中移除。依赖仍保留，可随时还原。</p>
-        <button class="recovery-button" id="apply-button" type="button">备份并停用故障 Bundle</button>
+        <h3>已验证恢复方案</h3>
+        <p id="recovery-summary">选择一个已经用完整 Profile 复验通过的 Bundle 停用方案。依赖仍保留，可随时还原。</p>
+        <div class="recovery-plans" id="recovery-plans" role="radiogroup" aria-label="恢复方案"></div>
+        <button class="recovery-button" id="apply-button" type="button">应用所选恢复方案</button>
         <button class="quiet-button full" id="restore-button" type="button" hidden>撤销本次恢复</button>
       </section>
 
@@ -201,7 +216,7 @@
   <dialog id="confirm-dialog">
     <form method="dialog" class="dialog-card">
       <span class="coordinate">WRITE CONFIRMATION</span>
-      <h2>应用恢复方案？</h2>
+      <h2>应用所选恢复方案？</h2>
       <p>这会修改所选 Profile 的 <code>package.json</code>，但会先在 <code>.lifeboat-backups</code> 中创建副本。</p>
       <div class="dialog-bundles" id="dialog-bundles"></div>
       <div class="dialog-actions">

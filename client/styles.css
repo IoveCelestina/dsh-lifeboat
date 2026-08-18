@@ -295,6 +295,13 @@ td { padding: 9px 8px; border-top: 1px solid #dbe4e6; vertical-align: top; overf
 .recovery-panel .coordinate { color: var(--sea-glass); }
 .recovery-panel h3 { margin: 0 0 7px; font: 700 20px Bahnschrift, sans-serif; }
 .recovery-panel p { color: #bdcdd2; font-size: 12px; line-height: 1.5; }
+.recovery-plans { display: grid; gap: 8px; margin: 14px 0; }
+.recovery-plan { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: start; padding: 11px; border: 1px solid #496675; background: rgba(255,255,255,0.04); cursor: pointer; }
+.recovery-plan:has(input:checked) { border-color: var(--sea-glass); background: rgba(112,213,184,0.12); }
+.recovery-plan input { margin-top: 3px; accent-color: var(--sea-glass); }
+.recovery-plan strong { display: block; color: white; font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
+.recovery-plan small { display: block; margin-top: 3px; color: #bdcdd2; font-size: 10px; }
+.recovery-plan-badge { padding: 3px 5px; color: var(--sea-glass); border: 1px solid #496675; font: 700 8px "Cascadia Mono", monospace; white-space: nowrap; text-transform: uppercase; }
 .recovery-panel .recovery-button { width: 100%; }
 .recovery-panel .quiet-button { color: white; border-color: #496675; }
 .warning-list { margin-top: 18px; padding: 12px; border-left: 3px solid #dfaa42; background: #fff9ea; color: #71551d; font-size: 11px; line-height: 1.5; }

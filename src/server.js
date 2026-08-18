@@ -136,6 +136,32 @@ function serializeJob(job, queuePosition) {
   }
 }
 
+function selectRecoveryPlan(recovery, requestedPlanId) {
+  const plans = Array.isArray(recovery?.plans) && recovery.plans.length > 0
+    ? recovery.plans
+    : recovery?.bundles?.length
+      ? [{ id: recovery.selectedPlanId ?? 'legacy-recovery', bundles: recovery.bundles }]
+      : []
+  const planId = requestedPlanId ?? recovery?.selectedPlanId ?? plans[0]?.id
+  if (typeof planId !== 'string' || planId.length === 0) {
+    const error = new Error('A verified recovery plan must be selected.')
+    error.statusCode = 400
+    throw error
+  }
+  const plan = plans.find(candidate => candidate.id === planId)
+  if (!plan) {
+    const error = new Error('The selected recovery plan was not verified by this diagnosis.')
+    error.statusCode = 409
+    throw error
+  }
+  if (!Array.isArray(plan.bundles) || plan.bundles.length === 0) {
+    const error = new Error('The selected recovery plan contains no bundles.')
+    error.statusCode = 409
+    throw error
+  }
+  return plan
+}
+
 function assertLocalHost(request) {
   const host = request.headers.host ?? ''
   const hostname = host.startsWith('[') ? host.slice(1, host.indexOf(']')) : host.split(':')[0]
@@ -406,7 +432,7 @@ export async function createLifeboatServer(options = {}) {
             sendJson(response, 202, { status: 'cancelling' })
             return
           }
-          await readJson(request)
+          const actionOptions = await readJson(request)
           if (job.mutating) {
             sendError(response, 409, 'A recovery operation is already running for this diagnosis.')
             return
@@ -418,12 +444,20 @@ export async function createLifeboatServer(options = {}) {
                 sendError(response, 409, 'This diagnosis has no applicable bundle recovery.')
                 return
               }
+              if (job.recoveryApplied) {
+                sendError(response, 409, 'Recovery has already been applied for this diagnosis.')
+                return
+              }
+              const plan = selectRecoveryPlan(job.report.recovery, actionOptions?.planId)
               job.recoveryApplied = await applyRecovery({
                 home: job.report.options.home,
                 profile: job.report.options.profile,
-                disableBundles: job.report.recovery.bundles,
+                disableBundles: plan.bundles,
                 expectedManifestHash: job.report.recovery.manifestHash,
               })
+              job.recoveryApplied.planId = plan.id
+              job.recoveryApplied.optimality = plan.optimality
+              job.recoveryApplied.verificationProbeId = plan.verificationProbeId
               const updated = await readProfile(job.report.options.home, job.report.options.profile)
               job.recoveryApplied.currentManifestHash = updated.hash
               await persistJob(job)
