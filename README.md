@@ -55,7 +55,13 @@ On PowerShell, quote any argument beginning with `--` when necessary.
 
 ## Install as a Harness bundle
 
-From the directory that contains this checkout:
+Install the pinned v0.1.0 release directly through Harness:
+
+```sh
+dsh plugin --profile web add https://github.com/IoveCelestina/dsh-lifeboat/releases/download/v0.1.0/dsh-lifeboat-0.1.0.tgz
+```
+
+For a local checkout, run this from its parent directory instead:
 
 ```sh
 dsh plugin --profile web add ./dsh-lifeboat
@@ -67,7 +73,7 @@ The package declares `dsh.bundle` through `cordis.patch.yml`. Installation adds 
 pnpm --dir "$DSH_HOME/profiles/web" exec dsh-lifeboat serve
 ```
 
-After publication, the same entry point can be run through the installed package manager or `pnpm dlx dsh-lifeboat`.
+The v0.1.0 package is published as a GitHub Release asset, not on the npm registry. The release-tarball command above was exercised end to end against the current Harness CLI.
 
 ## How isolation works
 

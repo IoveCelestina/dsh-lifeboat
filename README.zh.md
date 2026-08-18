@@ -61,7 +61,13 @@ node ./src/cli.js diagnose \
 
 ## 作为 Harness Bundle 安装
 
-在包含本目录的父目录执行：
+通过 Harness 安装固定版本的 v0.1.0 Release：
+
+```sh
+dsh plugin --profile web add https://github.com/IoveCelestina/dsh-lifeboat/releases/download/v0.1.0/dsh-lifeboat-0.1.0.tgz
+```
+
+如需安装本地检出，则在包含本目录的父目录执行：
 
 ```sh
 dsh plugin --profile web add ./dsh-lifeboat
@@ -72,6 +78,8 @@ dsh plugin --profile web add ./dsh-lifeboat
 ```sh
 pnpm --dir "$DSH_HOME/profiles/web" exec dsh-lifeboat serve
 ```
+
+v0.1.0 目前发布为 GitHub Release 资产，尚未发布到 npm Registry；上面的 Release tarball 安装命令已经用当前 Harness CLI 做过端到端验证。
 
 ## 自动隔离过程
 
