@@ -160,12 +160,21 @@ function signalProcessGroup(pid, signal) {
 
 async function waitForProcessGroupExit(pid, timeoutMs) {
   const deadline = Date.now() + timeoutMs
-  while (processGroupIsAlive(pid)) {
+  while (true) {
+    try {
+      if (!processGroupIsAlive(pid)) return true
+    } catch (error) {
+      // Darwin's killpg reports EPERM when a successfully signalled process
+      // group contains only zombies awaiting reaping. This helper is called
+      // only after SIGTERM/SIGKILL was accepted, so the error does not hide an
+      // initial permission failure or a still-running process owned elsewhere.
+      if (process.platform === 'darwin' && error.code === 'EPERM') return true
+      throw error
+    }
     const remaining = deadline - Date.now()
     if (remaining <= 0) return false
     await new Promise(resolve => setTimeout(resolve, Math.min(25, remaining)))
   }
-  return true
 }
 
 async function terminateChild(child) {
@@ -181,14 +190,20 @@ async function terminateChild(child) {
       child.kill('SIGKILL')
       await waitForExit(child, 1_500)
     }
-  } else if (processGroupIsAlive(child.pid)) {
-    signalProcessGroup(child.pid, 'SIGTERM')
-    if (!await waitForProcessGroupExit(child.pid, 1_500)) {
-      signalProcessGroup(child.pid, 'SIGKILL')
+  } else {
+    if (processGroupIsAlive(child.pid)) {
+      signalProcessGroup(child.pid, 'SIGTERM')
       if (!await waitForProcessGroupExit(child.pid, 1_500)) {
-        throw new Error(`Could not terminate owned probe process group ${child.pid}.`)
+        signalProcessGroup(child.pid, 'SIGKILL')
+        if (!await waitForProcessGroupExit(child.pid, 1_500)) {
+          throw new Error(`Could not terminate owned probe process group ${child.pid}.`)
+        }
       }
     }
+    // The kernel can report that the process group is gone before Node has
+    // delivered the child's exit event and populated exitCode/signalCode.
+    // Always give that event a bounded opportunity to settle, even when the
+    // initial process-group liveness check already returned false.
     await waitForExit(child, 500)
   }
   if (child.exitCode === null && child.signalCode === null) {
