@@ -21,6 +21,15 @@ function * combinations(items, size, start = 0, prefix = []) {
   }
 }
 
+function combinationCount(itemCount, size) {
+  const selected = Math.min(size, itemCount - size)
+  let result = 1n
+  for (let index = 1; index <= selected; index += 1) {
+    result = result * BigInt(itemCount - selected + index) / BigInt(index)
+  }
+  return result
+}
+
 function integerOption(value, fallback, minimum, maximum, name) {
   const selected = value ?? fallback
   if (!Number.isInteger(selected) || selected < minimum || selected > maximum) {
@@ -29,8 +38,20 @@ function integerOption(value, fallback, minimum, maximum, name) {
   return selected
 }
 
+function normalizeSet(items, order) {
+  return [...items].sort((left, right) => order.get(left) - order.get(right))
+}
+
 function setKey(items, order) {
-  return JSON.stringify([...items].sort((left, right) => order.get(left) - order.get(right)))
+  return JSON.stringify(normalizeSet(items, order))
+}
+
+function compareSets(left, right, order) {
+  for (let index = 0; index < Math.min(left.length, right.length); index += 1) {
+    const difference = order.get(left[index]) - order.get(right[index])
+    if (difference !== 0) return difference
+  }
+  return left.length - right.length
 }
 
 async function minimizeRecoveringSet(initial, evaluate, onStep) {
@@ -43,9 +64,11 @@ async function minimizeRecoveringSet(initial, evaluate, onStep) {
     let reduced = false
 
     for (const subset of subsets) {
-      onStep({ phase: 'fallback', kind: 'subset', size: subset.length, total: current.length })
-      const result = await evaluate(subset, 'fallback')
-      if (result.exhausted) return { bundles: current, completed: false }
+      onStep({ phase: 'upper-bound', kind: 'subset', size: subset.length, total: current.length })
+      const result = await evaluate(subset, 'upper-bound')
+      if (result.exhausted) {
+        return { bundles: current, completed: false, reason: result.reason }
+      }
       if (result.recovers) {
         current = subset
         granularity = Math.max(2, granularity - 1)
@@ -59,9 +82,11 @@ async function minimizeRecoveringSet(initial, evaluate, onStep) {
       const excluded = new Set(subset)
       const complement = current.filter(item => !excluded.has(item))
       if (complement.length === 0) continue
-      onStep({ phase: 'fallback', kind: 'complement', size: complement.length, total: current.length })
-      const result = await evaluate(complement, 'fallback')
-      if (result.exhausted) return { bundles: current, completed: false }
+      onStep({ phase: 'upper-bound', kind: 'complement', size: complement.length, total: current.length })
+      const result = await evaluate(complement, 'upper-bound')
+      if (result.exhausted) {
+        return { bundles: current, completed: false, reason: result.reason }
+      }
       if (result.recovers) {
         current = complement
         granularity = Math.max(2, granularity - 1)
@@ -76,13 +101,25 @@ async function minimizeRecoveringSet(initial, evaluate, onStep) {
   return { bundles: current, completed: true }
 }
 
+function materializePlans(bundleSets, optimality, order) {
+  return [...bundleSets]
+    .map(bundles => normalizeSet(bundles, order))
+    .sort((left, right) => compareSets(left, right, order))
+    .map((bundles, index) => ({
+      id: `recovery-${index + 1}`,
+      bundles,
+      optimality,
+      removalSize: bundles.length,
+    }))
+}
+
 /**
- * Find bundle removals that make the complete profile pass.
+ * Find verified bundle-removal plans with an upper-bound-first strategy.
  *
- * Small removal cardinalities are searched exactly. If that bounded search
- * does not find a plan, delta debugging minimizes a known-recovering removal
- * set. An incomplete fallback is evidence only and is never returned as an
- * applicable recovery plan.
+ * Delta debugging first finds a small known-recovering set under a bounded
+ * share of the budget. Exact enumeration then only needs to disprove smaller
+ * cardinalities. A plan is labelled exact iff every smaller cardinality was
+ * exhausted; an incomplete upper bound is never returned as one-minimal.
  */
 export async function findRecoveryPlans(items, recovers, options = {}) {
   const candidates = [...new Set(items)]
@@ -96,120 +133,191 @@ export async function findRecoveryPlans(items, recovers, options = {}) {
     'maxExactRemovalSize',
   )
   const maxAlternatives = integerOption(options.maxAlternatives, 8, 1, 32, 'maxAlternatives')
+  const alternativeBudget = Math.min(maxTests, integerOption(
+    options.maxAlternativeTests,
+    Math.min(32, Math.max(4, Math.floor(maxTests / 16))),
+    0,
+    1_024,
+    'maxAlternativeTests',
+  ))
   const onStep = options.onStep ?? (() => {})
+  const upperBoundBudget = Math.max(1, Math.floor(maxTests / 2))
   const cache = new Map()
+  let tests = 0
+  let upperBoundTests = 0
+  let alternativeTests = 0
+  let exactThrough = 0
+  let proofBudget = maxTests
+
+  const searchMetadata = extra => ({
+    strategy: 'upper-bound-first',
+    tests,
+    budget: maxTests,
+    upperBoundTests,
+    upperBoundBudget,
+    proofTests: tests - upperBoundTests - alternativeTests,
+    proofBudget,
+    alternativeTests,
+    alternativeBudget,
+    exactThrough,
+    ...extra,
+  })
+
+  if (candidates.length === 0) {
+    return {
+      plans: [],
+      search: searchMetadata({
+        alternativesComplete: true,
+        exhausted: false,
+        reason: 'no-candidates',
+      }),
+    }
+  }
+
   cache.set(setKey([], order), false)
   if (options.allRemovedRecovers === true) cache.set(setKey(candidates, order), true)
-  let tests = 0
-  let exactThrough = 0
-  const exactBudget = Math.min(maxTests, Math.max(Math.min(candidates.length, maxTests), Math.floor(maxTests / 2)))
 
   const evaluate = async (removed, phase) => {
-    const normalized = [...removed].sort((left, right) => order.get(left) - order.get(right))
+    const normalized = normalizeSet(removed, order)
     const key = setKey(normalized, order)
     if (cache.has(key)) return { recovers: cache.get(key), cached: true, exhausted: false }
-    if (tests >= maxTests) return { exhausted: true }
+    if (tests >= maxTests) return { exhausted: true, reason: 'budget-exhausted' }
+    if (phase.startsWith('upper-bound') && upperBoundTests >= upperBoundBudget) {
+      return { exhausted: true, reason: 'upper-bound-budget-exhausted' }
+    }
+    if (phase === 'alternatives' && alternativeTests >= alternativeBudget) {
+      return { exhausted: true, reason: 'alternative-budget-exhausted' }
+    }
     tests += 1
+    if (phase.startsWith('upper-bound')) upperBoundTests += 1
+    if (phase === 'alternatives') alternativeTests += 1
     onStep({ phase, kind: 'probe', removed: normalized, test: tests, budget: maxTests })
     const value = await recovers(normalized)
     cache.set(key, value)
     return { recovers: value, cached: false, exhausted: false }
   }
 
-  const exactLimit = Math.min(maxExactRemovalSize, candidates.length)
-  for (let size = 1; size <= exactLimit; size += 1) {
-    const plans = []
-    let completed = true
+  const enumerateCardinality = async (size, phase, knownPlans = []) => {
+    const plans = new Map(knownPlans.map(plan => [setKey(plan, order), normalizeSet(plan, order)]))
+    const total = combinationCount(candidates.length, size)
+    if (BigInt(plans.size) === total) {
+      return { plans: [...plans.values()], completed: true, visited: total, total }
+    }
+    let visited = 0n
+    let stopReason
     for (const removed of combinations(candidates, size)) {
-      if (tests >= exactBudget) {
-        completed = false
+      if (plans.size >= maxAlternatives) {
+        stopReason = 'alternative-limit'
         break
       }
-      const result = await evaluate(removed, 'exact')
+      const result = await evaluate(removed, plans.size > 0 ? 'alternatives' : phase)
       if (result.exhausted) {
-        completed = false
+        stopReason = result.reason
         break
       }
-      if (result.recovers) {
-        plans.push({
-          id: `recovery-${plans.length + 1}`,
-          bundles: [...removed],
-          optimality: 'exact',
-          removalSize: size,
-        })
-        if (plans.length >= maxAlternatives) {
-          completed = false
-          break
-        }
-      }
+      visited += 1n
+      if (result.recovers) plans.set(setKey(removed, order), [...removed])
     }
-    if (plans.length > 0) {
-      return {
-        plans,
-        search: {
-          tests,
-          budget: maxTests,
-          exactBudget,
-          exactThrough: size - 1,
-          alternativesComplete: completed,
-          exhausted: false,
-        },
-      }
+    return {
+      plans: [...plans.values()],
+      completed: visited === total,
+      stopReason,
+      visited,
+      total,
     }
-    if (!completed) break
-    exactThrough = size
   }
 
-  let allRemovedRecovers = options.allRemovedRecovers === true
-  if (!allRemovedRecovers) {
-    const result = await evaluate(candidates, 'fallback-baseline')
+  if (options.allRemovedRecovers !== true) {
+    const result = await evaluate(candidates, 'upper-bound-baseline')
     if (result.exhausted || !result.recovers) {
       return {
         plans: [],
-        search: {
-          tests,
-          budget: maxTests,
-          exactBudget,
-          exactThrough,
+        search: searchMetadata({
           alternativesComplete: false,
           exhausted: result.exhausted,
-          reason: result.exhausted ? 'budget-exhausted' : 'all-removed-still-fails',
-        },
+          reason: result.exhausted ? result.reason : 'all-removed-still-fails',
+        }),
       }
     }
-    allRemovedRecovers = true
   }
 
-  const fallback = await minimizeRecoveringSet(candidates, evaluate, onStep)
-  if (!fallback.completed) {
+  const upperBound = await minimizeRecoveringSet(candidates, evaluate, onStep)
+  proofBudget = maxTests - tests
+  const proofLimit = Math.min(
+    maxExactRemovalSize,
+    Math.max(0, upperBound.bundles.length - 1),
+    candidates.length,
+  )
+  let proofExhausted = false
+  let proofStopReason
+
+  for (let size = 1; size <= proofLimit; size += 1) {
+    const exact = await enumerateCardinality(size, 'proof')
+    if (exact.plans.length > 0) {
+      return {
+        plans: materializePlans(exact.plans, 'exact', order),
+        search: searchMetadata({
+          upperBoundSize: upperBound.bundles.length,
+          upperBoundComplete: upperBound.completed,
+          minimumRemovalSize: size,
+          alternativesComplete: exact.completed,
+          alternativesStopReason: exact.stopReason,
+          exhausted: false,
+        }),
+      }
+    }
+    if (!exact.completed) {
+      proofExhausted = exact.stopReason === 'budget-exhausted'
+      proofStopReason = exact.stopReason
+      break
+    }
+    exactThrough = size
+  }
+
+  if (exactThrough >= upperBound.bundles.length - 1) {
+    const alternatives = await enumerateCardinality(
+      upperBound.bundles.length,
+      'alternatives',
+      [upperBound.bundles],
+    )
     return {
-      plans: [],
-      search: {
-        tests,
-        budget: maxTests,
-        exactBudget,
-        exactThrough,
-        alternativesComplete: false,
-        exhausted: true,
-        reason: 'budget-exhausted',
-        boundedCandidate: fallback.bundles,
-      },
+      plans: materializePlans(alternatives.plans, 'exact', order),
+      search: searchMetadata({
+        upperBoundSize: upperBound.bundles.length,
+        upperBoundComplete: upperBound.completed,
+        minimumRemovalSize: upperBound.bundles.length,
+        alternativesComplete: alternatives.completed,
+        alternativesStopReason: alternatives.stopReason,
+        proofExhausted,
+        exhausted: false,
+      }),
     }
   }
+
+  if (upperBound.completed) {
+    return {
+      plans: materializePlans([upperBound.bundles], 'one-minimal', order),
+      search: searchMetadata({
+        upperBoundSize: upperBound.bundles.length,
+        upperBoundComplete: true,
+        alternativesComplete: false,
+        proofExhausted,
+        proofStopReason,
+        exhausted: false,
+      }),
+    }
+  }
+
   return {
-    plans: [{
-      id: 'recovery-1',
-      bundles: fallback.bundles,
-      optimality: 'one-minimal',
-      removalSize: fallback.bundles.length,
-    }],
-    search: {
-      tests,
-      budget: maxTests,
-      exactBudget,
-      exactThrough,
+    plans: [],
+    search: searchMetadata({
+      upperBoundSize: upperBound.bundles.length,
+      upperBoundComplete: false,
       alternativesComplete: false,
-      exhausted: false,
-    },
+      proofExhausted,
+      exhausted: true,
+      reason: proofStopReason ?? upperBound.reason ?? 'upper-bound-incomplete',
+      boundedCandidate: upperBound.bundles,
+    }),
   }
 }
