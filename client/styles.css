@@ -138,6 +138,17 @@ button:disabled { cursor: not-allowed; opacity: 0.5; }
 .section-heading.compact { margin-bottom: 22px; }
 
 #diagnose-form { margin-top: 28px; }
+
+.recent-panel { margin-top: 34px; padding-top: 22px; border-top: 1px solid var(--line); }
+.recent-panel .panel-title h2 { margin: 0; font: 700 16px Bahnschrift, sans-serif; }
+.recent-list { display: grid; gap: 7px; }
+.recent-empty { margin: 0; padding: 13px; color: var(--muted); border: 1px dashed var(--line); font-size: 11px; text-align: center; }
+.recent-report { display: grid; gap: 6px; width: 100%; padding: 10px 11px; color: var(--ocean-950); background: white; border: 1px solid var(--line); text-align: left; }
+.recent-report:hover { border-color: var(--ocean-650); }
+.recent-report > span:first-child { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.recent-report strong { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.recent-report small { flex: none; color: var(--rescue-dark); font: 700 8px "Cascadia Mono", monospace; text-transform: uppercase; }
+.recent-report > span:last-child { color: var(--muted); font: 9px "Cascadia Mono", monospace; }
 .field { display: grid; gap: 8px; margin-bottom: 16px; }
 .field > span,
 .mode-field legend {
