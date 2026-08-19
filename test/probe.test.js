@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -41,8 +41,74 @@ test('runtime probe accepts a process that survives the startup window', async (
     timeoutMs: 4_000,
     successWindowMs: 350,
   })
-  assert.equal(result.status, 'pass')
+  assert.equal(result.status, 'pass', JSON.stringify(result))
   assert.equal(result.reason, 'boot-window-survived')
+})
+
+test('runtime probe rejects a clean exit before the startup window', async () => {
+  const result = await runProbe({
+    command: process.execPath,
+    commandArgs: ['-e', 'process.exit(0)', '--'],
+    home: process.cwd(),
+    profile: 'fixture',
+    cwd: process.cwd(),
+    mode: 'boot',
+    timeoutMs: 4_000,
+    successWindowMs: 500,
+  })
+  assert.equal(result.status, 'fail')
+  assert.equal(result.reason, 'early-exit')
+  assert.equal(result.exitCode, 0)
+})
+
+test('runtime probe refuses to shorten an impossible startup window', () => {
+  assert.throws(() => runProbe({
+    command: process.execPath,
+    home: process.cwd(),
+    profile: 'fixture',
+    cwd: process.cwd(),
+    mode: 'boot',
+    timeoutMs: 1_000,
+    successWindowMs: 751,
+  }), /leave at least 250ms/)
+})
+
+test('POSIX probes terminate descendants after the process-group leader exits', { skip: process.platform === 'win32' }, async () => {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-lifeboat-tree-test-'))
+  const pidPath = join(root, 'descendant.pid')
+  let descendantPid
+  const isAlive = pid => {
+    try {
+      process.kill(pid, 0)
+      return true
+    } catch (error) {
+      return error.code !== 'ESRCH'
+    }
+  }
+  try {
+    const source = [
+      "const { spawn } = require('node:child_process')",
+      "const { writeFileSync } = require('node:fs')",
+      `const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })`,
+      `writeFileSync(${JSON.stringify(pidPath)}, String(child.pid))`,
+      'child.unref()',
+    ].join(';')
+    const result = await runProbe({
+      command: process.execPath,
+      commandArgs: ['-e', source, '--'],
+      home: root,
+      profile: 'fixture',
+      cwd: root,
+      mode: 'config',
+      timeoutMs: 4_000,
+    })
+    descendantPid = Number(await readFile(pidPath, 'utf8'))
+    assert.equal(result.status, 'pass')
+    assert.equal(isAlive(descendantPid), false)
+  } finally {
+    if (descendantPid && isAlive(descendantPid)) process.kill(descendantPid, 'SIGKILL')
+    await rm(root, { recursive: true, force: true })
+  }
 })
 
 test('Windows batch shims run without enabling an interpolating shell command', { skip: process.platform !== 'win32' }, async () => {

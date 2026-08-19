@@ -5,9 +5,11 @@ import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { applyRecovery, restoreRecovery } from './recovery.js'
 import { diagnoseProfile } from './diagnose.js'
-import { listProfiles, resolveDshHome } from './manifest.js'
+import { listProfiles, readProfile, resolveDshHome } from './manifest.js'
+import { validateProbeTiming } from './probe.js'
 import { createReportStore } from './report-store.js'
 import { VERSION } from './version.js'
+import { fingerprintProbeInputs } from './workspace.js'
 
 const CLIENT_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'client')
 const MAX_BODY_BYTES = 64 * 1024
@@ -94,6 +96,15 @@ function normalizeJobOptions(body, defaultHome, defaultJobTimeoutMs) {
   if (typeof command !== 'string' || command === '' || command.length > 4_096) {
     throw new Error('command must be a non-empty executable name or path.')
   }
+  const timeoutMs = finiteInteger(
+    body.timeoutMs,
+    mode === 'config' ? 60_000 : 20_000,
+    1_000,
+    300_000,
+    'timeoutMs',
+  )
+  const successWindowMs = finiteInteger(body.successWindowMs, 8_000, 500, 60_000, 'successWindowMs')
+  validateProbeTiming({ mode, timeoutMs, successWindowMs })
   return {
     home: resolveDshHome(body.home || defaultHome),
     profile: body.profile || 'web',
@@ -101,8 +112,8 @@ function normalizeJobOptions(body, defaultHome, defaultJobTimeoutMs) {
     command,
     commandArgs: stringArray(body.commandArgs, 'commandArgs'),
     bootArgs: stringArray(body.bootArgs, 'bootArgs'),
-    timeoutMs: finiteInteger(body.timeoutMs, mode === 'config' ? 60_000 : 20_000, 1_000, 300_000, 'timeoutMs'),
-    successWindowMs: finiteInteger(body.successWindowMs, 8_000, 500, 60_000, 'successWindowMs'),
+    timeoutMs,
+    successWindowMs,
     bootConfirmations: finiteInteger(body.bootConfirmations, 2, 1, 5, 'bootConfirmations'),
     maxCandidateBundles: finiteInteger(body.maxCandidateBundles, 128, 1, 512, 'maxCandidateBundles'),
     maxExactRemovalSize: finiteInteger(body.maxExactRemovalSize, 2, 1, 8, 'maxExactRemovalSize'),
@@ -160,6 +171,30 @@ function selectRecoveryPlan(recovery, requestedPlanId) {
     throw error
   }
   return plan
+}
+
+async function assertDiagnosisInputsCurrent(report) {
+  const expected = report.profile?.inputFingerprint
+  if (expected?.schema !== 'dsh-lifeboat-inputs/v1'
+    || !expected.hash || expected.hash !== report.recovery?.inputFingerprintHash) {
+    throw Object.assign(new Error('This diagnosis does not contain a complete input fingerprint. Run it again before recovery.'), {
+      statusCode: 409,
+    })
+  }
+  let current
+  try {
+    const profile = await readProfile(report.options.home, report.options.profile)
+    current = await fingerprintProbeInputs(profile, expected.policy)
+  } catch (error) {
+    throw Object.assign(new Error(`Could not revalidate Profile inputs before recovery: ${error.message}`), {
+      statusCode: 409,
+    })
+  }
+  if (current.fingerprint.hash !== expected.hash) {
+    throw Object.assign(new Error('Profile inputs changed after diagnosis. Run a fresh diagnosis before applying recovery.'), {
+      statusCode: 409,
+    })
+  }
 }
 
 function assertLocalHost(request) {
@@ -515,6 +550,7 @@ export async function createLifeboatServer(options = {}) {
                 return
               }
               const plan = selectRecoveryPlan(job.report.recovery, actionOptions?.planId)
+              await assertDiagnosisInputsCurrent(job.report)
               job.recoveryApplied = await applyRecovery({
                 home: job.report.options.home,
                 profile: job.report.options.profile,

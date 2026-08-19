@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { readFile, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { test } from 'node:test'
 import { diagnoseProfile } from '../src/diagnose.js'
 import { fakeProbe, profileFixture } from './helpers.js'
@@ -115,6 +117,19 @@ test('runtime diagnosis requires explicit code-execution acknowledgement', async
   )
 })
 
+test('runtime diagnosis rejects a success window that cannot fully elapse', async () => {
+  await assert.rejects(
+    diagnoseProfile({
+      mode: 'boot',
+      profile: 'web',
+      allowRuntimeCodeExecution: true,
+      timeoutMs: 1_000,
+      successWindowMs: 800,
+    }),
+    /leave at least 250ms/,
+  )
+})
+
 test('runtime diagnosis refuses recovery when fresh confirmation attempts disagree', async () => {
   const fixture = await profileFixture()
   const homes = []
@@ -169,6 +184,36 @@ test('stops before probing when the candidate set exceeds the configured limit',
     assert.equal(report.finding.code, 'candidate-limit')
     assert.equal(report.recovery, undefined)
     assert.equal(calls, 0)
+  } finally {
+    await fixture.cleanup()
+  }
+})
+
+test('diagnosis reuses its snapshot and withholds recovery when live inputs drift', async () => {
+  const fixture = await profileFixture()
+  const observedPatches = []
+  const deterministicProbe = fakeProbe(({ bundles }) => bundles.includes('beta'))
+  let changed = false
+  try {
+    await writeFile(join(fixture.profileDir, 'safe.txt'), 'snapshot-value\n')
+    const report = await diagnoseProfile({ home: fixture.home, profile: fixture.profile }, {
+      probeRunner: async options => {
+        observedPatches.push(await readFile(join(options.home, 'profiles', options.profile, 'cordis.patch.yml'), 'utf8'))
+        if (!changed) {
+          changed = true
+          await writeFile(join(fixture.profileDir, 'safe.txt'), 'changed-live-value\n')
+          await writeFile(join(fixture.profileDir, 'cordis.patch.yml'), 'CHANGED_DURING_DIAGNOSIS\n')
+        }
+        return deterministicProbe(options)
+      },
+    })
+    assert.equal(report.status, 'completed')
+    assert.equal(report.finding.code, 'inputs-changed')
+    assert.equal(report.recovery, undefined)
+    assert.ok(observedPatches.length > 1)
+    assert.ok(observedPatches.every(value => value === '[]\n'))
+    assert.notEqual(report.profile.currentInputFingerprint.hash, report.profile.inputFingerprint.hash)
+    assert.match(report.warnings.join('\n'), /automatic recovery was withheld/)
   } finally {
     await fixture.cleanup()
   }

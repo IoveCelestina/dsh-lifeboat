@@ -11,12 +11,12 @@ DSH Lifeboat is an out-of-process recovery console for DeepSeek Harness profiles
 - A loopback-only Web UI at `127.0.0.1` with live probe progress, evidence, verified recovery-plan selection, report download, and one-step undo.
 - A CLI mode that emits the same `dsh-lifeboat/v1` JSON report without the UI.
 - Config probes using `dsh --profile <name> --dump-config`.
-- Optional runtime probes that treat a clean exit or survival through a configurable startup window as a successful boot.
-- Fresh temporary homes for every probe attempt; runtime results are confirmed twice by default and mixed evidence never enables recovery.
+- Optional runtime probes that require the process to survive the full configurable startup window; any earlier exit, including exit code 0, fails the boot probe.
+- One bounded configuration snapshot per diagnosis, cloned into a fresh temporary Home for every probe attempt; runtime results are confirmed twice by default and mixed evidence never enables recovery.
 - Bounded removal-set search over the complete Profile: exact minimum-cardinality plans at shallow depths, followed by a verified 1-minimal fallback.
 - Separate checks for profile-level and Harness-home `cordis.patch.yml` failures.
-- Optimistic manifest hashing, timestamped backups, and atomic recovery writes.
-- A bounded diagnosis queue, graceful process shutdown, `GET /api/health`, restart-safe report/undo recovery, and atomically persisted reports.
+- Full probe-input fingerprint checks before recovery, optimistic manifest hashing, timestamped backups, and atomic recovery writes.
+- A bounded diagnosis queue, graceful process shutdown, `GET /api/health`, browser-session reconnect, restart-safe report/undo recovery, and atomically persisted reports.
 - A small Harness plugin that writes `~/.dsh/lifeboat/last-healthy.json` only after the Loader settles. The rescue server itself never runs inside the failing Harness process.
 
 ## Run from this checkout
@@ -78,14 +78,14 @@ Release packages are distributed as GitHub Release assets, not through the npm r
 
 ## How isolation works
 
-1. Lifeboat reads `$DSH_HOME/profiles/<name>/package.json` and records its SHA-256 hash.
+1. Lifeboat reads `$DSH_HOME/profiles/<name>/package.json`, both user-patch layers, bounded safe Profile assets, and installed package-resolution identities into one diagnosis snapshot.
 2. Installation-owned bundles stay fixed. Bundles also present in the profile's `dependencies` become candidates.
-3. Every probe attempt receives a new direct child named `dsh-lifeboat-*` under the operating-system temp directory.
-4. Bounded regular profile assets are copied. Credential-bearing files and symlinked assets are skipped. Installed packages are exposed through absolute package-resolution links so pnpm's relative links remain valid in the temporary profile.
+3. Every probe attempt receives a fresh clone of that configuration snapshot under a new direct child named `dsh-lifeboat-probe-*` in the operating-system temp directory.
+4. Credential-bearing files and symlinked assets are skipped. Package links use the absolute targets captured at snapshot time so pnpm's relative links remain valid and later link-target swaps cannot change the diagnosis midway.
 5. The full composition is probed. If it fails, Lifeboat distinguishes clean bundle failures from user-patch failures.
 6. For a community-bundle failure, Lifeboat tests removal sets while keeping every nonremoved Bundle active. It enumerates cardinalities from one through the configured exact depth. When one succeeds, every smaller cardinality has already been exhausted, so the plan has globally minimum removal cardinality.
 7. If the exact phase finds no plan, delta debugging shrinks the known-recovering "remove all candidates" set. The result is 1-minimal: re-adding any one removed Bundle loses the observed recovery, but a smaller nonlocal plan may exist.
-8. Every candidate plan is independently re-run in another fresh Home with the complete remaining Profile. Failed verification, unstable runtime evidence, or an exhausted search budget suppresses automatic recovery.
+8. Every candidate plan is independently re-run in another fresh Home with the complete remaining Profile. Failed verification, unstable runtime evidence, an exhausted search budget, or live inputs that no longer match the snapshot suppresses automatic recovery.
 9. In runtime mode, inconsistent repeated attempts stop the diagnosis as `unstable-probe` without offering recovery.
 10. Each temporary directory is removed after all owned links are unlinked, unless `--keep-artifacts` was selected.
 
@@ -113,7 +113,10 @@ Running a later `dsh plugin` package-manager command may reconcile an installed 
 - Config mode does not mount plugin rows. Runtime mode does execute installed plugin code with the current operating-system user permissions and therefore requires an explicit acknowledgement. The temporary Home isolates configuration and runtime data; it is not an operating-system sandbox for plugin source code.
 - Probe processes receive a credential-scrubbed environment. A plugin that requires an API key may therefore fail for an environmental reason; the report preserves this distinction as far as the process result allows.
 - Runtime survival is a health heuristic, not proof of full application correctness. Prefer config mode for deterministic loader/configuration failures.
+- A boot success window must end at least 250 ms before the overall probe timeout. Invalid combinations are rejected instead of silently shortening the requested window.
 - Relative profile assets are copied up to 32 MiB. Links are skipped and reported, so a profile built around linked local sources may require `--keep-artifacts` and manual inspection.
+- On POSIX, probes run in their own process group and cleanup targets that complete group, including descendants that remain in it after the group leader exits. Windows uses `taskkill /T` while the owned probe process is alive.
+- Package-resolution fingerprints include captured real targets and package manifests; installed package source trees are linked rather than fully copied. In-place source edits that leave `package.json` unchanged are outside the immutable configuration snapshot and should be avoided during diagnosis.
 - The current candidate classifier follows the Harness profile contract: out-of-tree bundle names are active bundles also listed in `dependencies`. Installation-owned bundles are never automatically disabled.
 - The current release targets the `dsh.profile.bundles` format used by current pre-release Harness builds. It has not been validated against every historical release.
 
