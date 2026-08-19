@@ -105,10 +105,11 @@ Release 包通过 GitHub Release 资产分发，不发布到 npm Registry。在�
 
 1. 用户在多个经验证的等价方案中选择一个。
 2. 服务端从自己的诊断报告解析 `planId`，拒绝客户端自行拼出的 Bundle 列表。
-3. 重新读取 manifest；若诊断后的文件 Hash 已变化则拒绝写入。
-4. 将原文件保存到 `.lifeboat-backups/`。
-5. 只从 `dsh.profile.bundles` 移除所选方案的 Bundle，原子替换 manifest，并保留已安装依赖。
-6. 同一本地服务会话内可一键撤销。
+3. 获取 Profile 级跨进程写锁，拒绝重叠的恢复操作。
+4. 重新读取 manifest；若诊断后的文件 Hash 已变化则拒绝写入。
+5. 拒绝链接形式的 Profile、manifest、锁或备份目录，再将原文件完整写入 `.lifeboat-backups/`，文件名记录完整 SHA-256。
+6. 校验备份后原子替换 manifest，只从 `dsh.profile.bundles` 移除所选方案的 Bundle，并保留已安装依赖。
+7. 一键撤销前同时校验备份 Hash 和 manifest 结构，并把恢复后的 manifest 留作额外回退保护。
 
 之后执行 `dsh plugin` 包管理命令时，Harness 可能根据已安装依赖重新激活 Bundle。恢复启动后仍应更新或移除真正有问题的依赖。
 

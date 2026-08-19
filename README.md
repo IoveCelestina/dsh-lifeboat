@@ -99,10 +99,11 @@ These are recovery plans, not moral blame. If A and B fail only when active toge
 
 1. lets the operator choose among verified alternatives;
 2. resolves that `planId` from the server-owned diagnosis report and rejects arbitrary Bundle lists;
-3. re-reads the original manifest and rejects the write if its hash changed;
-4. saves the exact original file under `.lifeboat-backups/`;
-5. atomically replaces `package.json`, removing only the selected plan's Bundles from `dsh.profile.bundles` while keeping dependencies installed;
-6. exposes “Undo this recovery” for the same local server session.
+3. acquires a per-Profile, cross-process mutation lock and rejects overlapping recovery operations;
+4. re-reads the original manifest and rejects the write if its hash changed;
+5. refuses linked Profile, manifest, lock, or backup-directory paths, then writes the exact original file under `.lifeboat-backups/` with its full SHA-256 in the filename;
+6. verifies the backup before atomically replacing `package.json`, removing only the selected plan's Bundles from `dsh.profile.bundles` while keeping dependencies installed;
+7. verifies both the backup hash and manifest shape before “Undo this recovery,” while preserving the post-recovery manifest as another restore guard.
 
 Running a later `dsh plugin` package-manager command may reconcile an installed bundle back into the active list. Remove or update the actual faulty dependency after recovery.
 
