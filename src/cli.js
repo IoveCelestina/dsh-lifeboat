@@ -6,7 +6,7 @@ function help() {
   return `dsh-lifeboat — out-of-process recovery for DeepSeek Harness
 
 Usage:
-  dsh-lifeboat serve [--home PATH] [--port NUMBER] [--state-dir PATH] [--job-timeout MS]
+  dsh-lifeboat serve [--home PATH] [--port NUMBER] [--state-dir PATH] [--job-timeout MS] [--max-reports N]
   dsh-lifeboat diagnose [options]
 
 Diagnose options:
@@ -26,6 +26,12 @@ Diagnose options:
                                Required for --mode boot
   --keep-artifacts            Preserve the isolated probe home
   --json                      Print only the final JSON report
+
+Serve options:
+  --state-dir PATH            Private service state directory
+  --max-concurrent N          Concurrent diagnoses from 1 to 4 (default: 1)
+  --job-timeout MS            Per-job deadline, up to 6 hours (default: 30 minutes)
+  --max-reports N             Persisted report limit, or 0 to disable pruning (default: 500)
 `
 }
 
@@ -56,6 +62,7 @@ function parse(argv) {
     else if (flag === '--state-dir') options.stateDir = take(flag)
     else if (flag === '--max-concurrent') options.maxConcurrentJobs = Number(take(flag))
     else if (flag === '--job-timeout') options.defaultJobTimeoutMs = Number(take(flag))
+    else if (flag === '--max-reports') options.maxReports = Number(take(flag))
     else if (flag === '--keep-artifacts') options.keepArtifacts = true
     else if (flag === '--allow-runtime-code-execution') options.allowRuntimeCodeExecution = true
     else if (flag === '--json') options.json = true
@@ -87,12 +94,17 @@ async function main() {
       && (!Number.isInteger(options.maxConcurrentJobs) || options.maxConcurrentJobs < 1 || options.maxConcurrentJobs > 4)) {
       throw new Error('--max-concurrent must be an integer from 1 to 4.')
     }
+    if (options.maxReports !== undefined
+      && (!Number.isInteger(options.maxReports) || options.maxReports < 0 || options.maxReports > 10_000)) {
+      throw new Error('--max-reports must be an integer from 0 to 10000.')
+    }
     const lifeboat = await createLifeboatServer({
       home: options.home,
       port: options.port,
       stateDir: options.stateDir,
       maxConcurrentJobs: options.maxConcurrentJobs,
       defaultJobTimeoutMs: options.defaultJobTimeoutMs,
+      maxReports: options.maxReports,
     })
     console.log(`Lifeboat is ready at ${lifeboat.url}`)
     console.log('The rescue console is bound to 127.0.0.1 and does not modify a profile until you confirm Apply recovery.')

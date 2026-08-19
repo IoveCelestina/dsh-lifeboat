@@ -41,6 +41,7 @@ const elements = {
   dialog: document.querySelector('#confirm-dialog'),
   dialogBundles: document.querySelector('#dialog-bundles'),
   confirmApply: document.querySelector('#confirm-apply'),
+  recentReports: document.querySelector('#recent-reports'),
   toast: document.querySelector('#toast'),
 }
 
@@ -118,15 +119,33 @@ function traceItem(event) {
   return item
 }
 
-function renderTrace(events) {
-  const relevant = events.filter(event => ['probe-started', 'probe-finished', 'diagnosis-finished', 'diagnosis-failed'].includes(event.type)).slice(-9)
-  if (relevant.length === 0) return
-  elements.trace.replaceChildren(...relevant.map(traceItem))
+function emptyTraceItem() {
+  const item = document.createElement('li')
+  const dot = document.createElement('span')
+  const message = document.createElement('p')
+  item.className = 'empty-trace'
+  message.textContent = '这个诊断还没有探测事件。'
+  item.append(dot, message)
+  return item
 }
 
-function renderEvidence(probes) {
-  if (!probes?.length) return
-  elements.evidence.replaceChildren(...probes.map(probe => {
+function renderTrace(events = []) {
+  const relevant = events.filter(event => ['probe-started', 'probe-finished', 'diagnosis-finished', 'diagnosis-failed'].includes(event.type)).slice(-9)
+  elements.trace.replaceChildren(...(relevant.length > 0 ? relevant.map(traceItem) : [emptyTraceItem()]))
+}
+
+function emptyEvidenceRow() {
+  const row = document.createElement('tr')
+  const cell = document.createElement('td')
+  cell.colSpan = 3
+  cell.className = 'table-empty'
+  cell.textContent = '暂无探测记录'
+  row.append(cell)
+  return row
+}
+
+function renderEvidence(probes = []) {
+  elements.evidence.replaceChildren(...(probes.length > 0 ? probes.map(probe => {
     const row = document.createElement('tr')
     const label = document.createElement('td')
     const size = document.createElement('td')
@@ -139,7 +158,7 @@ function renderEvidence(probes) {
     result.append(tag)
     row.append(label, size, result)
     return row
-  }))
+  }) : [emptyEvidenceRow()]))
 }
 
 function availableRecoveryPlans(recovery) {
@@ -195,6 +214,21 @@ function renderRecovery(recovery) {
 }
 
 function renderFinding(report) {
+  elements.findingCode.textContent = 'NOT RUN'
+  elements.findingTitle.textContent = '还没有证据'
+  elements.findingSummary.textContent = '运行一次隔离诊断后，这里会说明问题来自 Bundle、用户 Patch，还是基础环境。'
+  elements.findingCard.dataset.kind = 'empty'
+  elements.bundleList.replaceChildren()
+  elements.download.disabled = true
+  elements.recovery.hidden = true
+  elements.recoveryPlans.replaceChildren()
+  elements.apply.disabled = true
+  elements.apply.textContent = '应用所选恢复方案'
+  elements.restore.hidden = true
+  elements.restore.disabled = false
+  elements.restore.textContent = '撤销本次恢复'
+  elements.warnings.hidden = true
+  elements.warnings.replaceChildren()
   const finding = report?.finding
   if (!finding) return
   elements.findingCode.textContent = finding.code.toUpperCase().replaceAll('-', ' / ')
@@ -219,14 +253,64 @@ function renderFinding(report) {
       line.textContent = `• ${warning}`
       return line
     }))
-  } else {
-    elements.warnings.hidden = true
   }
+}
+
+function renderJobError(error) {
+  if (!error) return
+  elements.findingCode.textContent = 'JOB / FAILED'
+  elements.findingTitle.textContent = '诊断没有完成'
+  elements.findingSummary.textContent = error
+  elements.findingCard.dataset.kind = 'failure'
+}
+
+function formatReportTime(report) {
+  const value = report.savedAt ?? report.finishedAt ?? report.createdAt
+  const timestamp = Date.parse(value)
+  return Number.isFinite(timestamp)
+    ? new Intl.DateTimeFormat('zh-CN', { dateStyle: 'short', timeStyle: 'short' }).format(timestamp)
+    : '时间未知'
+}
+
+function renderRecentReports(reports = []) {
+  if (reports.length === 0) {
+    const empty = document.createElement('p')
+    empty.className = 'recent-empty'
+    empty.textContent = '还没有保存的诊断。'
+    elements.recentReports.replaceChildren(empty)
+    return
+  }
+  elements.recentReports.replaceChildren(...reports.slice(0, 10).map(report => {
+    const button = document.createElement('button')
+    const heading = document.createElement('span')
+    const title = document.createElement('strong')
+    const status = document.createElement('small')
+    const meta = document.createElement('span')
+    button.type = 'button'
+    button.className = 'recent-report'
+    title.textContent = report.finding?.title ?? statusLabel(report.status)
+    status.textContent = report.recoveryPending ? '可撤销恢复' : statusLabel(report.status)
+    meta.textContent = `${report.profile ?? '未知 Profile'} · ${formatReportTime(report)}`
+    heading.append(title, status)
+    button.append(heading, meta)
+    button.addEventListener('click', async () => {
+      button.disabled = true
+      await pollJob(report.id)
+      button.disabled = false
+    })
+    return button
+  }))
+}
+
+async function refreshRecentReports() {
+  const value = await api('/api/reports')
+  renderRecentReports(value.reports)
 }
 
 function renderJob(job) {
   state.job = job
   sessionStorage.setItem('dsh-lifeboat-active-job', job.id)
+  state.selectedPlanId = job.recoveryApplied?.planId ?? null
   const running = ['queued', 'running'].includes(job.status)
   elements.start.disabled = running
   elements.cancel.hidden = !running
@@ -236,18 +320,19 @@ function renderJob(job) {
   elements.runState.dataset.state = job.status
   elements.sonar.dataset.state = job.status
   const report = job.report
-  if (job.recoveryApplied?.planId) state.selectedPlanId = job.recoveryApplied.planId
   const probes = report?.probes ?? []
-  const started = [...job.events].reverse().find(event => event.type === 'probe-started')
+  const events = Array.isArray(job.events) ? job.events : []
+  const started = [...events].reverse().find(event => event.type === 'probe-started')
   elements.probeCount.textContent = String(probes.length)
   elements.scanCount.textContent = String(probes.length)
   elements.scanKicker.textContent = running ? 'ACTIVE PROBES' : job.status.toUpperCase()
   elements.scanLabel.textContent = started?.label ?? report?.finding?.title ?? statusLabel(job.status)
   elements.currentSize.textContent = started ? String(started.bundles.length) : '—'
   elements.suspectCount.textContent = report?.profile?.suspectBundles?.length ?? '—'
-  renderTrace(job.events)
+  renderTrace(events)
   renderEvidence(probes)
-  if (report) renderFinding(report)
+  renderFinding(report)
+  if (!report?.finding) renderJobError(job.error)
   if (job.recoveryApplied) {
     elements.apply.disabled = true
     elements.apply.textContent = '已应用所选恢复方案'
@@ -265,6 +350,7 @@ async function pollJob(id) {
     const job = await api(`/api/jobs/${id}`)
     renderJob(job)
     if (['queued', 'running'].includes(job.status)) state.pollTimer = setTimeout(() => pollJob(id), 650)
+    else await refreshRecentReports()
   } catch (error) {
     if (error.status === 404) sessionStorage.removeItem('dsh-lifeboat-active-job')
     showToast(error.message)
@@ -399,6 +485,7 @@ async function bootstrap() {
     state.token = value.token
     elements.home.value = value.defaultHome
     setProfiles(value.profiles)
+    renderRecentReports(value.recentReports)
     updateMode()
     const activeJob = sessionStorage.getItem('dsh-lifeboat-active-job')
     if (activeJob) await pollJob(activeJob)

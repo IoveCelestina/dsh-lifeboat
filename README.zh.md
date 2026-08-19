@@ -16,7 +16,7 @@ DSH Lifeboat 是 DeepSeek Harness Profile 的进程外救援控制台。即使�
 - 对完整 Profile 执行有界删除集合搜索：浅层先证明全局最少删除数，再以经验证的 1-minimal 方案兜底。
 - 分别检查 Profile 自身和 Harness Home 的 `cordis.patch.yml`。
 - 恢复前重新校验完整探测输入指纹和 manifest SHA-256，再创建时间戳备份并原子写入；同一服务会话内可撤销。
-- 有界单任务队列、可控关停、`GET /api/health`、页面刷新续接，以及原子持久化诊断报告。
+- 有界单任务队列、可控关停、`GET /api/health`、页面刷新续接、服务重启后找回报告与撤销凭据，以及原子持久化诊断报告。
 - Harness 内部只加载一个健康标记插件；救援服务本身始终在 Harness 进程外。
 
 ## 从当前目录运行
@@ -29,7 +29,7 @@ node ./src/cli.js serve
 
 打开终端输出的 `http://127.0.0.1:<端口>/`。默认端口是 `4317`，可用 `--port 0` 自动选择空闲端口。
 
-终态报告默认保存到 `$DSH_HOME/lifeboat/reports`。systemd 与 Windows 任务计划程序的托管方法见[服务运行说明](docs/service.md)。
+终态报告默认保存到 `$DSH_HOME/lifeboat/reports`，默认保留最新 500 份；可用 `--max-reports N` 调整。只有外部留存策略负责清理时才建议用 `--max-reports 0` 关闭自动清理。systemd 与 Windows 任务计划程序的托管方法见[服务运行说明](docs/service.md)。
 
 只使用 CLI：
 
@@ -109,7 +109,7 @@ Release 包通过 GitHub Release 资产分发，不发布到 npm Registry。在�
 4. 重新读取 manifest；若诊断后的文件 Hash 已变化则拒绝写入。
 5. 拒绝链接形式的 Profile、manifest、锁或备份目录，再将原文件完整写入 `.lifeboat-backups/`，文件名记录完整 SHA-256。
 6. 校验备份后原子替换 manifest，只从 `dsh.profile.bundles` 移除所选方案的 Bundle，并保留已安装依赖。
-7. 一键撤销前同时校验备份 Hash 和 manifest 结构，并把恢复后的 manifest 留作额外回退保护。
+7. 持久化恢复凭据，使一键撤销在本地服务重启后仍可用；撤销前同时校验备份 Hash 和 manifest 结构，并把恢复后的 manifest 留作额外回退保护。
 
 之后执行 `dsh plugin` 包管理命令时，Harness 可能根据已安装依赖重新激活 Bundle。恢复启动后仍应更新或移除真正有问题的依赖。
 

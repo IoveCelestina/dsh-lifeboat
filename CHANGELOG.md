@@ -2,6 +2,12 @@
 
 All notable changes to DSH Lifeboat are documented here. The project follows Semantic Versioning.
 
+## Unreleased
+
+- Reopen persisted diagnoses and guarded undo receipts after a local service restart.
+- Show recent reports in the Web UI and clear stale trace, evidence, warning, and recovery state when switching jobs.
+- Retain the newest 500 report files by default with a configurable `--max-reports` limit.
+
 ## 0.1.1 - 2026-08-18
 
 - Search for Bundle removal sets that make the complete Profile pass instead of minimizing a failure-inducing subset.

@@ -249,7 +249,10 @@ export async function createLifeboatServer(options = {}) {
     6 * 60 * 60 * 1_000,
     'defaultJobTimeoutMs',
   )
-  const reportStore = createReportStore(options.stateDir ?? join(defaultHome, 'lifeboat'))
+  const reportStore = createReportStore(options.stateDir ?? join(defaultHome, 'lifeboat'), {
+    maxReports: finiteInteger(options.maxReports, 500, 0, 10_000, 'maxReports'),
+  })
+  await reportStore.prune()
   const startedAt = Date.now()
   let closing = false
   let closePromise
@@ -280,7 +283,7 @@ export async function createLifeboatServer(options = {}) {
   const pruneJobs = () => {
     const removable = [...jobs.values()]
       .filter(job => !['queued', 'running'].includes(job.status))
-      .sort((left, right) => Date.parse(left.finishedAt) - Date.parse(right.finishedAt))
+      .sort((left, right) => (Date.parse(left.finishedAt) || 0) - (Date.parse(right.finishedAt) || 0))
     while (jobs.size >= maxRetainedJobs && removable.length > 0) {
       jobs.delete(removable.shift().id)
     }
@@ -288,6 +291,67 @@ export async function createLifeboatServer(options = {}) {
       const error = new Error('The diagnosis queue is full. Wait for an active job to finish.')
       error.statusCode = 503
       throw error
+    }
+  }
+
+  const loadingJobs = new Map()
+  const hydrateStoredJob = value => {
+    const interrupted = ['queued', 'running'].includes(value.status)
+    const finishedAt = interrupted ? new Date().toISOString() : value.finishedAt
+    const events = Array.isArray(value.events)
+      ? value.events.filter(event => event && typeof event === 'object' && !Array.isArray(event)).slice(-400)
+      : []
+    if (interrupted) {
+      events.push({
+        at: finishedAt,
+        type: 'service-restarted',
+        error: 'The Lifeboat service restarted before this diagnosis reached a terminal state.',
+      })
+    }
+    return {
+      job: {
+        id: value.id,
+        status: interrupted ? 'failed' : value.status,
+        createdAt: value.createdAt,
+        startedAt: value.startedAt,
+        finishedAt,
+        events,
+        report: value.report,
+        error: interrupted
+          ? 'The Lifeboat service restarted before this diagnosis reached a terminal state.'
+          : value.error,
+        recoveryApplied: value.recoveryApplied,
+        recoveryRestored: value.recoveryRestored,
+        reportSaved: true,
+        controller: new AbortController(),
+      },
+      interrupted,
+    }
+  }
+
+  const loadJob = async id => {
+    if (jobs.has(id)) return jobs.get(id)
+    if (loadingJobs.has(id)) return loadingJobs.get(id)
+    const loading = (async () => {
+      let value
+      try {
+        value = await reportStore.get(id)
+      } catch (error) {
+        if (error.code === 'ENOENT' || error.code === 'EINVALREPORTID') return undefined
+        throw error
+      }
+      if (jobs.has(id)) return jobs.get(id)
+      pruneJobs()
+      const { job, interrupted } = hydrateStoredJob(value)
+      jobs.set(job.id, job)
+      if (interrupted) await persistJob(job)
+      return job
+    })()
+    loadingJobs.set(id, loading)
+    try {
+      return await loading
+    } finally {
+      loadingJobs.delete(id)
     }
   }
 
@@ -381,6 +445,7 @@ export async function createLifeboatServer(options = {}) {
           defaultHome,
           profiles: await listProfiles(defaultHome),
           recentReports: await reportStore.list(10),
+          reportRetentionLimit: reportStore.maxReports,
           safety: 'Profile manifests and patches remain read-only until Apply recovery. Runtime probes execute installed plugin code with the current user permissions.',
         })
         return
@@ -392,6 +457,7 @@ export async function createLifeboatServer(options = {}) {
           uptimeSeconds: Math.floor((Date.now() - startedAt) / 1_000),
           queueDepth: queue.filter(job => job.status === 'queued').length,
           runningJobs: running.size,
+          reportRetentionLimit: reportStore.maxReports,
         })
         return
       }
@@ -409,14 +475,14 @@ export async function createLifeboatServer(options = {}) {
         try {
           sendJson(response, 200, await reportStore.get(reportMatch[1]))
         } catch (error) {
-          if (error.code === 'ENOENT') sendError(response, 404, 'Diagnosis report not found.')
+          if (error.code === 'ENOENT' || error.code === 'EINVALREPORTID') sendError(response, 404, 'Diagnosis report not found.')
           else throw error
         }
         return
       }
       const jobMatch = url.pathname.match(/^\/api\/jobs\/([a-f0-9-]+)$/)
       if (request.method === 'GET' && jobMatch) {
-        const job = jobs.get(jobMatch[1])
+        const job = await loadJob(jobMatch[1])
         if (!job) sendError(response, 404, 'Diagnosis job not found.')
         else sendJson(response, 200, publicJob(job))
         return
@@ -445,7 +511,7 @@ export async function createLifeboatServer(options = {}) {
         }
         const actionMatch = url.pathname.match(/^\/api\/jobs\/([a-f0-9-]+)\/(cancel|apply|restore)$/)
         if (actionMatch) {
-          const job = jobs.get(actionMatch[1])
+          const job = await loadJob(actionMatch[1])
           if (!job) {
             sendError(response, 404, 'Diagnosis job not found.')
             return
