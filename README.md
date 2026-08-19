@@ -11,7 +11,7 @@ DSH Lifeboat is an out-of-process recovery console for DeepSeek Harness profiles
 - A loopback-only Web UI at `127.0.0.1` with live probe progress, evidence, verified recovery-plan selection, report download, and one-step undo.
 - A CLI mode that emits the same `dsh-lifeboat/v1` JSON report without the UI.
 - Config probes using `dsh --profile <name> --dump-config`.
-- Optional runtime probes that treat a clean exit or survival through a configurable startup window as a successful boot.
+- Optional runtime probes that require the process to survive the full configurable startup window; any earlier exit, including exit code 0, fails the boot probe.
 - Fresh temporary homes for every probe attempt; runtime results are confirmed twice by default and mixed evidence never enables recovery.
 - Bounded removal-set search over the complete Profile: exact minimum-cardinality plans at shallow depths, followed by a verified 1-minimal fallback.
 - Separate checks for profile-level and Harness-home `cordis.patch.yml` failures.
@@ -112,6 +112,7 @@ Running a later `dsh plugin` package-manager command may reconcile an installed 
 - Config mode does not mount plugin rows. Runtime mode does execute installed plugin code with the current operating-system user permissions and therefore requires an explicit acknowledgement. The temporary Home isolates configuration and runtime data; it is not an operating-system sandbox for plugin source code.
 - Probe processes receive a credential-scrubbed environment. A plugin that requires an API key may therefore fail for an environmental reason; the report preserves this distinction as far as the process result allows.
 - Runtime survival is a health heuristic, not proof of full application correctness. Prefer config mode for deterministic loader/configuration failures.
+- A boot success window must end at least 250 ms before the overall probe timeout. Invalid combinations are rejected instead of silently shortening the requested window.
 - Relative profile assets are copied up to 32 MiB. Links are skipped and reported, so a profile built around linked local sources may require `--keep-artifacts` and manual inspection.
 - The current candidate classifier follows the Harness profile contract: out-of-tree bundle names are active bundles also listed in `dependencies`. Installation-owned bundles are never automatically disabled.
 - The current release targets the `dsh.profile.bundles` format used by current pre-release Harness builds. It has not been validated against every historical release.

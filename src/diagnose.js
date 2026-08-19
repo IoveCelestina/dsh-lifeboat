@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { classifyBundles, readProfile } from './manifest.js'
-import { runProbe } from './probe.js'
+import { runProbe, validateProbeTiming } from './probe.js'
 import { findRecoveryPlans } from './recovery-search.js'
 import { createProbeWorkspace } from './workspace.js'
 
@@ -49,6 +49,11 @@ function validateOptions(options) {
     && (!Number.isInteger(options.maxRecoveryProbes) || options.maxRecoveryProbes < 1 || options.maxRecoveryProbes > 4_096)) {
     throw new Error('maxRecoveryProbes must be an integer between 1 and 4096.')
   }
+  return validateProbeTiming({
+    mode,
+    timeoutMs: options.timeoutMs,
+    successWindowMs: options.successWindowMs,
+  })
 }
 
 function patchFinding(profileOnlyFailed, homeOnlyFailed) {
@@ -82,7 +87,7 @@ function patchFinding(profileOnlyFailed, homeOnlyFailed) {
 
 /** Diagnose one profile entirely through an isolated temporary DSH_HOME. */
 export async function diagnoseProfile(options, dependencies = {}) {
-  validateOptions(options)
+  const probeTiming = validateOptions(options)
   const emit = dependencies.emit ?? (() => {})
   const probeRunner = dependencies.probeRunner ?? runProbe
   const profile = await readProfile(options.home, options.profile ?? 'web')
@@ -100,6 +105,8 @@ export async function diagnoseProfile(options, dependencies = {}) {
       command: options.command ?? 'dsh',
       commandArgs: options.commandArgs ?? [],
       bootArgs: options.bootArgs ?? [],
+      timeoutMs: probeTiming.timeoutMs,
+      successWindowMs: probeTiming.mode === 'boot' ? probeTiming.successWindowMs : undefined,
       bootConfirmations: options.mode === 'boot' ? options.bootConfirmations ?? 2 : 1,
       maxCandidateBundles: options.maxCandidateBundles ?? 128,
       maxExactRemovalSize: options.maxExactRemovalSize ?? 2,
@@ -175,8 +182,8 @@ export async function diagnoseProfile(options, dependencies = {}) {
           cwd: workspace.profileDir,
           mode: options.mode ?? 'config',
           bootArgs: options.bootArgs ?? [],
-          timeoutMs: options.timeoutMs,
-          successWindowMs: options.successWindowMs,
+          timeoutMs: probeTiming.timeoutMs,
+          successWindowMs: probeTiming.successWindowMs,
           signal: options.signal,
         })
       } finally {

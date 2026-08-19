@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { applyRecovery, restoreRecovery } from './recovery.js'
 import { diagnoseProfile } from './diagnose.js'
 import { listProfiles, resolveDshHome } from './manifest.js'
+import { validateProbeTiming } from './probe.js'
 import { createReportStore } from './report-store.js'
 import { VERSION } from './version.js'
 
@@ -94,6 +95,15 @@ function normalizeJobOptions(body, defaultHome, defaultJobTimeoutMs) {
   if (typeof command !== 'string' || command === '' || command.length > 4_096) {
     throw new Error('command must be a non-empty executable name or path.')
   }
+  const timeoutMs = finiteInteger(
+    body.timeoutMs,
+    mode === 'config' ? 60_000 : 20_000,
+    1_000,
+    300_000,
+    'timeoutMs',
+  )
+  const successWindowMs = finiteInteger(body.successWindowMs, 8_000, 500, 60_000, 'successWindowMs')
+  validateProbeTiming({ mode, timeoutMs, successWindowMs })
   return {
     home: resolveDshHome(body.home || defaultHome),
     profile: body.profile || 'web',
@@ -101,8 +111,8 @@ function normalizeJobOptions(body, defaultHome, defaultJobTimeoutMs) {
     command,
     commandArgs: stringArray(body.commandArgs, 'commandArgs'),
     bootArgs: stringArray(body.bootArgs, 'bootArgs'),
-    timeoutMs: finiteInteger(body.timeoutMs, mode === 'config' ? 60_000 : 20_000, 1_000, 300_000, 'timeoutMs'),
-    successWindowMs: finiteInteger(body.successWindowMs, 8_000, 500, 60_000, 'successWindowMs'),
+    timeoutMs,
+    successWindowMs,
     bootConfirmations: finiteInteger(body.bootConfirmations, 2, 1, 5, 'bootConfirmations'),
     maxCandidateBundles: finiteInteger(body.maxCandidateBundles, 128, 1, 512, 'maxCandidateBundles'),
     maxExactRemovalSize: finiteInteger(body.maxExactRemovalSize, 2, 1, 8, 'maxExactRemovalSize'),

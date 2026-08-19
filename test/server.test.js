@@ -42,6 +42,21 @@ test('serves the rescue UI and completes a token-protected diagnosis job', async
     })
     assert.equal(runtimeDenied.status, 400)
 
+    const impossibleWindow = await fetch(`${lifeboat.url}api/jobs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Lifeboat-Token': bootstrap.token },
+      body: JSON.stringify({
+        home: fixture.home,
+        profile: fixture.profile,
+        mode: 'boot',
+        allowRuntimeCodeExecution: true,
+        timeoutMs: 1_000,
+        successWindowMs: 800,
+      }),
+    })
+    assert.equal(impossibleWindow.status, 400)
+    assert.match((await impossibleWindow.json()).error, /leave at least 250ms/)
+
     const createdResponse = await fetch(`${lifeboat.url}api/jobs`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Lifeboat-Token': bootstrap.token },

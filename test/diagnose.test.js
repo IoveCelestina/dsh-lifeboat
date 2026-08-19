@@ -115,6 +115,19 @@ test('runtime diagnosis requires explicit code-execution acknowledgement', async
   )
 })
 
+test('runtime diagnosis rejects a success window that cannot fully elapse', async () => {
+  await assert.rejects(
+    diagnoseProfile({
+      mode: 'boot',
+      profile: 'web',
+      allowRuntimeCodeExecution: true,
+      timeoutMs: 1_000,
+      successWindowMs: 800,
+    }),
+    /leave at least 250ms/,
+  )
+})
+
 test('runtime diagnosis refuses recovery when fresh confirmation attempts disagree', async () => {
   const fixture = await profileFixture()
   const homes = []

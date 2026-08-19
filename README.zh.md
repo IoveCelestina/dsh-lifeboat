@@ -11,7 +11,7 @@ DSH Lifeboat 是 DeepSeek Harness Profile 的进程外救援控制台。即使�
 - 仅监听 `127.0.0.1` 的独立 Web 界面：展示探测进度、证据、已验证恢复方案选择、报告下载和一键撤销。
 - 无界面的 CLI 诊断，输出相同的 `dsh-lifeboat/v1` JSON 报告。
 - 默认通过 `dsh --profile <name> --dump-config` 做确定性的配置探测。
-- 可选启动探测：进程正常退出或存活超过健康窗口即视为启动成功。
+- 可选启动探测：进程必须完整存活超过配置的健康窗口；在此之前退出（包括退出码 0）都会判定失败。
 - 每次探测都创建全新的临时 Home；启动探测默认重复确认两次，证据不一致时不开放恢复。
 - 对完整 Profile 执行有界删除集合搜索：浅层先证明全局最少删除数，再以经验证的 1-minimal 方案兜底。
 - 分别检查 Profile 自身和 Harness Home 的 `cordis.patch.yml`。
@@ -118,6 +118,7 @@ Release 包通过 GitHub Release 资产分发，不发布到 npm Registry。在�
 - 配置探测不会挂载插件行。启动探测会以当前系统用户权限执行插件代码，它不是操作系统级插件沙箱。
 - 子进程环境会移除名称含 `KEY`、`SECRET`、`TOKEN`、`PASSWORD`、`CREDENTIAL`、`COOKIE` 或 `AUTH` 的变量。
 - 启动存活窗口只是健康启发式，不代表应用功能已经全部验证。
+- 启动健康窗口必须比探测总超时至少早 250 毫秒结束；参数冲突时直接拒绝，不再静默缩短窗口。
 - 当前版本面向采用 `dsh.profile.bundles` 的 Harness 预发布版本，尚未覆盖所有历史版本。
 
 ## 与 dsh-guard 的关系
