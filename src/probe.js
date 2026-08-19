@@ -160,12 +160,21 @@ function signalProcessGroup(pid, signal) {
 
 async function waitForProcessGroupExit(pid, timeoutMs) {
   const deadline = Date.now() + timeoutMs
-  while (processGroupIsAlive(pid)) {
+  while (true) {
+    try {
+      if (!processGroupIsAlive(pid)) return true
+    } catch (error) {
+      // Darwin's killpg reports EPERM when a successfully signalled process
+      // group contains only zombies awaiting reaping. This helper is called
+      // only after SIGTERM/SIGKILL was accepted, so the error does not hide an
+      // initial permission failure or a still-running process owned elsewhere.
+      if (process.platform === 'darwin' && error.code === 'EPERM') return true
+      throw error
+    }
     const remaining = deadline - Date.now()
     if (remaining <= 0) return false
     await new Promise(resolve => setTimeout(resolve, Math.min(25, remaining)))
   }
-  return true
 }
 
 async function terminateChild(child) {
