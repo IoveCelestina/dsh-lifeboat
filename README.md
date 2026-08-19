@@ -16,7 +16,7 @@ DSH Lifeboat is an out-of-process recovery console for DeepSeek Harness profiles
 - Bounded removal-set search over the complete Profile: exact minimum-cardinality plans at shallow depths, followed by a verified 1-minimal fallback.
 - Separate checks for profile-level and Harness-home `cordis.patch.yml` failures.
 - Optimistic manifest hashing, timestamped backups, and atomic recovery writes.
-- A bounded diagnosis queue, graceful process shutdown, `GET /api/health`, browser-session reconnect, and atomically persisted reports.
+- A bounded diagnosis queue, graceful process shutdown, `GET /api/health`, restart-safe report/undo recovery, and atomically persisted reports.
 - A small Harness plugin that writes `~/.dsh/lifeboat/last-healthy.json` only after the Loader settles. The rescue server itself never runs inside the failing Harness process.
 
 ## Run from this checkout
@@ -29,7 +29,7 @@ node ./src/cli.js serve
 
 Open the printed `http://127.0.0.1:<port>/` address. The default port is `4317`; use `--port 0` for a random free port.
 
-Terminal reports are stored under `$DSH_HOME/lifeboat/reports`. See [service operation](docs/service.md) for systemd and Windows Task Scheduler guidance.
+Terminal reports are stored under `$DSH_HOME/lifeboat/reports`. The service keeps the newest 500 by default; use `--max-reports N`, or `--max-reports 0` only when an external retention policy owns cleanup. See [service operation](docs/service.md) for systemd and Windows Task Scheduler guidance.
 
 Run without the UI:
 
@@ -103,7 +103,7 @@ These are recovery plans, not moral blame. If A and B fail only when active toge
 4. re-reads the original manifest and rejects the write if its hash changed;
 5. refuses linked Profile, manifest, lock, or backup-directory paths, then writes the exact original file under `.lifeboat-backups/` with its full SHA-256 in the filename;
 6. verifies the backup before atomically replacing `package.json`, removing only the selected plan's Bundles from `dsh.profile.bundles` while keeping dependencies installed;
-7. verifies both the backup hash and manifest shape before “Undo this recovery,” while preserving the post-recovery manifest as another restore guard.
+7. persists the recovery receipt so “Undo this recovery” survives a local service restart, then verifies both the backup hash and manifest shape while preserving the post-recovery manifest as another restore guard.
 
 Running a later `dsh plugin` package-manager command may reconcile an installed bundle back into the active list. Remove or update the actual faulty dependency after recovery.
 

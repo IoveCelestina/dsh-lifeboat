@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 import { readProfile } from '../src/manifest.js'
+import { createReportStore } from '../src/report-store.js'
 import { createLifeboatServer } from '../src/server.js'
 import { profileFixture } from './helpers.js'
 
@@ -15,6 +17,7 @@ test('serves the rescue UI and completes a token-protected diagnosis job', async
     assert.match(pageText, /DSH Lifeboat/)
     assert.match(pageText, /id="recovery-plans"/)
     assert.match(pageText, /id="max-recovery-probes-input"/)
+    assert.match(pageText, /id="recent-reports"/)
 
     const bootstrap = await (await fetch(`${lifeboat.url}api/bootstrap`)).json()
     const denied = await fetch(`${lifeboat.url}api/jobs`, {
@@ -146,6 +149,31 @@ test('runs diagnoses through a bounded queue and cancels a queued job without st
   }
 })
 
+test('marks a persisted in-flight job as interrupted after restart', async () => {
+  const fixture = await profileFixture({ bundles: ['@deepseek-ai/dsh-base'], dependencies: {} })
+  const store = createReportStore(fixture.home)
+  const id = randomUUID()
+  await store.persist({
+    schema: 'dsh-lifeboat-job/v1',
+    id,
+    status: 'running',
+    createdAt: '2026-08-19T00:00:00.000Z',
+    startedAt: '2026-08-19T00:00:01.000Z',
+    events: [{ at: '2026-08-19T00:00:01.000Z', type: 'probe-started' }],
+  })
+  const lifeboat = await createLifeboatServer({ home: fixture.home, stateDir: fixture.home, port: 0 })
+  try {
+    const job = await fetch(`${lifeboat.url}api/jobs/${id}`).then(response => response.json())
+    assert.equal(job.status, 'failed')
+    assert.match(job.error, /service restarted/)
+    assert.equal(job.events.at(-1).type, 'service-restarted')
+    assert.equal((await store.get(id)).status, 'failed')
+  } finally {
+    await lifeboat.close()
+    await fixture.cleanup()
+  }
+})
+
 test('applies only the recovery plan selected from the verified report', async () => {
   const fixture = await profileFixture()
   const original = await readProfile(fixture.home, fixture.profile)
@@ -167,7 +195,7 @@ test('applies only the recovery plan selected from the verified report', async (
       ],
     },
   })
-  const lifeboat = await createLifeboatServer({ home: fixture.home, port: 0, diagnose })
+  let lifeboat = await createLifeboatServer({ home: fixture.home, port: 0, diagnose })
   try {
     const bootstrap = await fetch(`${lifeboat.url}api/bootstrap`).then(response => response.json())
     const headers = { 'Content-Type': 'application/json', 'X-Lifeboat-Token': bootstrap.token }
@@ -210,9 +238,17 @@ test('applies only the recovery plan selected from the verified report', async (
     assert.equal(repeated.status, 409)
     assert.deepEqual((await readProfile(fixture.home, fixture.profile)).bundles, updated.bundles)
 
+    await lifeboat.close()
+    lifeboat = await createLifeboatServer({ home: fixture.home, port: 0, diagnose })
+    const restartedBootstrap = await fetch(`${lifeboat.url}api/bootstrap`).then(response => response.json())
+    assert.equal(restartedBootstrap.reportRetentionLimit, 500)
+    assert.ok(restartedBootstrap.recentReports.some(report => report.id === job.id && report.recoveryPending))
+    const reloaded = await fetch(`${lifeboat.url}api/jobs/${job.id}`).then(response => response.json())
+    assert.equal(reloaded.recoveryApplied.planId, 'recovery-2')
+
     const restored = await fetch(`${lifeboat.url}api/jobs/${job.id}/restore`, {
       method: 'POST',
-      headers,
+      headers: { 'Content-Type': 'application/json', 'X-Lifeboat-Token': restartedBootstrap.token },
       body: '{}',
     }).then(response => response.json())
     assert.equal(restored.backupHash, original.hash)
