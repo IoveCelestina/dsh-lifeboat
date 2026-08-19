@@ -41,7 +41,7 @@ test('runtime probe accepts a process that survives the startup window', async (
     timeoutMs: 4_000,
     successWindowMs: 350,
   })
-  assert.equal(result.status, 'pass')
+  assert.equal(result.status, 'pass', JSON.stringify(result))
   assert.equal(result.reason, 'boot-window-survived')
 })
 

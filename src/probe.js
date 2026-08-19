@@ -181,14 +181,20 @@ async function terminateChild(child) {
       child.kill('SIGKILL')
       await waitForExit(child, 1_500)
     }
-  } else if (processGroupIsAlive(child.pid)) {
-    signalProcessGroup(child.pid, 'SIGTERM')
-    if (!await waitForProcessGroupExit(child.pid, 1_500)) {
-      signalProcessGroup(child.pid, 'SIGKILL')
+  } else {
+    if (processGroupIsAlive(child.pid)) {
+      signalProcessGroup(child.pid, 'SIGTERM')
       if (!await waitForProcessGroupExit(child.pid, 1_500)) {
-        throw new Error(`Could not terminate owned probe process group ${child.pid}.`)
+        signalProcessGroup(child.pid, 'SIGKILL')
+        if (!await waitForProcessGroupExit(child.pid, 1_500)) {
+          throw new Error(`Could not terminate owned probe process group ${child.pid}.`)
+        }
       }
     }
+    // The kernel can report that the process group is gone before Node has
+    // delivered the child's exit event and populated exitCode/signalCode.
+    // Always give that event a bounded opportunity to settle, even when the
+    // initial process-group liveness check already returned false.
     await waitForExit(child, 500)
   }
   if (child.exitCode === null && child.signalCode === null) {
