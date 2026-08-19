@@ -13,7 +13,7 @@ DSH Lifeboat is an out-of-process recovery console for DeepSeek Harness profiles
 - Config probes using `dsh --profile <name> --dump-config`.
 - Optional runtime probes that treat a clean exit or survival through a configurable startup window as a successful boot.
 - Fresh temporary homes for every probe attempt; runtime results are confirmed twice by default and mixed evidence never enables recovery.
-- Bounded removal-set search over the complete Profile: exact minimum-cardinality plans at shallow depths, followed by a verified 1-minimal fallback.
+- Bounded upper-bound-first removal search over the complete Profile: delta debugging finds a small verified plan, then shallow exact enumeration proves whether any smaller plan exists.
 - Separate checks for profile-level and Harness-home `cordis.patch.yml` failures.
 - Optimistic manifest hashing, timestamped backups, and atomic recovery writes.
 - A bounded diagnosis queue, graceful process shutdown, `GET /api/health`, browser-session reconnect, and atomically persisted reports.
@@ -83,13 +83,13 @@ Release packages are distributed as GitHub Release assets, not through the npm r
 3. Every probe attempt receives a new direct child named `dsh-lifeboat-*` under the operating-system temp directory.
 4. Bounded regular profile assets are copied. Credential-bearing files and symlinked assets are skipped. Installed packages are exposed through absolute package-resolution links so pnpm's relative links remain valid in the temporary profile.
 5. The full composition is probed. If it fails, Lifeboat distinguishes clean bundle failures from user-patch failures.
-6. For a community-bundle failure, Lifeboat tests removal sets while keeping every nonremoved Bundle active. It enumerates cardinalities from one through the configured exact depth. When one succeeds, every smaller cardinality has already been exhausted, so the plan has globally minimum removal cardinality.
-7. If the exact phase finds no plan, delta debugging shrinks the known-recovering "remove all candidates" set. The result is 1-minimal: re-adding any one removed Bundle loses the observed recovery, but a smaller nonlocal plan may exist.
+6. For a community-bundle failure, bounded delta debugging first shrinks the known-recovering “remove all candidates” set. A completed result is 1-minimal: re-adding any one removed Bundle loses the observed recovery.
+7. Lifeboat then enumerates only removal cardinalities smaller than that upper bound, up to the configured exact depth. If all smaller cardinalities are exhausted, the upper bound is promoted to globally minimum `exact`; otherwise the completed 1-minimal result remains explicitly non-global. A separate small residual budget looks for equal-size alternatives.
 8. Every candidate plan is independently re-run in another fresh Home with the complete remaining Profile. Failed verification, unstable runtime evidence, or an exhausted search budget suppresses automatic recovery.
 9. In runtime mode, inconsistent repeated attempts stop the diagnosis as `unstable-probe` without offering recovery.
 10. Each temporary directory is removed after all owned links are unlinked, unless `--keep-artifacts` was selected.
 
-The search never performs an unbounded `2^n` powerset walk. Exact depth `k` has up to `C(n,1) + ... + C(n,k)` candidates, but a hard logical-probe budget stops both exact and fallback phases. Defaults are depth 2 and 256 recovery probes in config mode or 64 in boot mode; the advanced UI and `--max-exact-removals` / `--max-recovery-probes` expose these limits.
+The search never performs an unbounded `2^n` powerset walk. At most half of the logical-probe budget is used to obtain the initial upper bound; the unused budget plus the reserved proof share can test `C(n,1) + ... + C(n,k)` candidates only below that bound. Equal-size alternative discovery has its own sub-budget within the same total (normally 4–32 probes, capped by a smaller total) and the existing result-count cap. Defaults remain exact depth 2 and 256 total recovery probes in config mode or 64 in boot mode; the advanced UI and `--max-exact-removals` / `--max-recovery-probes` expose the main limits.
 
 These are recovery plans, not moral blame. If A and B fail only when active together, Lifeboat can offer "disable A" and "disable B" as equal one-removal alternatives. If A and B fail independently, a verified plan must remove both. Reports distinguish `exact` from `one-minimal` and record whether all equal-size alternatives were enumerated.
 

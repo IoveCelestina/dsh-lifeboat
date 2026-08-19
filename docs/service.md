@@ -11,7 +11,7 @@ The HTTP service is loopback-only. Keep it under the same user account that owns
 - Default job deadline: 30 minutes; override with `--job-timeout MS` (maximum: 6 hours).
 - Automatic isolation stops at 128 candidate bundles by default; raise `--max-candidates` only after reviewing the profile.
 - Recovery search tests exact removal cardinalities through depth 2 by default; set `--max-exact-removals N` from 1 to 8 for CLI diagnoses or use the Web UI's advanced controls.
-- The logical recovery-search budget defaults to 256 probes in config mode and 64 in boot mode; set `--max-recovery-probes N` from 1 to 4096 or use the Web UI. Reaching the limit suppresses automatic recovery rather than returning a partially minimized plan.
+- The logical recovery-search budget defaults to 256 probes in config mode and 64 in boot mode; set `--max-recovery-probes N` from 1 to 4096 or use the Web UI. At most half is spent finding an initial upper bound, and equal-size alternatives use a small sub-budget within that total. A partially minimized upper bound is never returned; a completed 1-minimal plan remains valid even when the optional global-minimum proof runs out of budget.
 
 The health endpoint returns `503` while the service is stopping. Reports are written atomically and contain local paths and captured plugin output, so the state directory should remain private to the service user. Lifeboat does not automatically delete persisted reports; rotate that directory with an explicit user-owned retention policy.
 

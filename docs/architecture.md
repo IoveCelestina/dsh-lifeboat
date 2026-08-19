@@ -21,9 +21,9 @@ The recovery service does not depend on the Harness Loader. A broken active bund
 2. Keep installation-owned bundles fixed and identify dependency-backed active bundles as candidates.
 3. For every logical probe, create a fresh temporary `DSH_HOME`, copy bounded non-sensitive regular assets, and link installed package directories by their resolved absolute targets.
 4. Probe the original composition, then clean bundle and patch baselines.
-5. If community Bundles are implicated, evaluate removal sets against the complete Profile. Search cardinalities from one through the configured exact depth; the first successful cardinality is globally minimum because every smaller cardinality was exhausted.
-6. If the exact depth finds no plan, minimize the known-recovering "remove all candidates" set. The fallback is 1-minimal: re-adding any one removed Bundle loses the observed recovery, but a smaller nonlocal plan may exist.
-7. Bound both phases by a logical-probe budget. An incomplete fallback is evidence only and never becomes an applicable recovery.
+5. If community Bundles are implicated, spend at most half of the logical-probe budget delta-debugging the known-recovering “remove all candidates” set into a small upper bound.
+6. Enumerate removal cardinalities below that bound, up to the configured exact depth. Exhausting every smaller cardinality proves the upper bound globally minimum; otherwise a completed delta-debugging result remains 1-minimal rather than being overstated as exact.
+7. Use a separate small allowance for equal-cardinality alternatives. A partially minimized upper bound is evidence only and never becomes an applicable recovery, while proof-budget exhaustion does not invalidate an already completed 1-minimal plan.
 8. Re-run every candidate plan in another fresh Home with all nonremoved Bundles and the original patch layers. Only independently passing plans enter `recovery.plans`.
 9. In runtime mode, repeat each logical probe in fresh homes. Mixed results produce `unstable-probe` and suppress recovery.
 10. Persist the terminal job report under the service state directory.
