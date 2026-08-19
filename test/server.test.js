@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
+import { writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { test } from 'node:test'
 import { readProfile } from '../src/manifest.js'
 import { createLifeboatServer } from '../src/server.js'
+import { fingerprintProbeInputs } from '../src/workspace.js'
 import { profileFixture } from './helpers.js'
 
 test('serves the rescue UI and completes a token-protected diagnosis job', async () => {
@@ -164,6 +167,7 @@ test('runs diagnoses through a bounded queue and cancels a queued job without st
 test('applies only the recovery plan selected from the verified report', async () => {
   const fixture = await profileFixture()
   const original = await readProfile(fixture.home, fixture.profile)
+  const inputFingerprint = (await fingerprintProbeInputs(original)).fingerprint
   const diagnose = async options => ({
     schema: 'dsh-lifeboat/v1',
     status: 'completed',
@@ -171,11 +175,13 @@ test('applies only the recovery plan selected from the verified report', async (
     probes: [],
     warnings: [],
     finding: { code: 'plugin-set', title: 'Verified recoveries', summary: 'Fixture report.' },
+    profile: { inputFingerprint },
     recovery: {
       action: 'disable-bundles',
       bundles: ['alpha'],
       selectedPlanId: 'recovery-1',
       manifestHash: original.hash,
+      inputFingerprintHash: inputFingerprint.hash,
       plans: [
         { id: 'recovery-1', bundles: ['alpha'], optimality: 'exact', verificationProbeId: 'probe-alpha' },
         { id: 'recovery-2', bundles: ['gamma'], optimality: 'exact', verificationProbeId: 'probe-gamma' },
@@ -224,6 +230,56 @@ test('applies only the recovery plan selected from the verified report', async (
     })
     assert.equal(repeated.status, 409)
     assert.deepEqual((await readProfile(fixture.home, fixture.profile)).bundles, updated.bundles)
+  } finally {
+    await lifeboat.close()
+    await fixture.cleanup()
+  }
+})
+
+test('rejects recovery when a non-manifest probe input changed after diagnosis', async () => {
+  const fixture = await profileFixture()
+  await writeFile(join(fixture.profileDir, 'safe.txt'), 'diagnosed-value\n')
+  const original = await readProfile(fixture.home, fixture.profile)
+  const inputFingerprint = (await fingerprintProbeInputs(original)).fingerprint
+  const diagnose = async options => ({
+    schema: 'dsh-lifeboat/v1',
+    status: 'completed',
+    options: { home: options.home, profile: options.profile, mode: 'config' },
+    profile: { inputFingerprint },
+    probes: [],
+    warnings: [],
+    finding: { code: 'plugin-set', title: 'Verified recovery', summary: 'Fixture report.' },
+    recovery: {
+      action: 'disable-bundles',
+      bundles: ['beta'],
+      selectedPlanId: 'recovery-1',
+      manifestHash: original.hash,
+      inputFingerprintHash: inputFingerprint.hash,
+      plans: [{ id: 'recovery-1', bundles: ['beta'], optimality: 'exact', verificationProbeId: 'probe-beta' }],
+    },
+  })
+  const lifeboat = await createLifeboatServer({ home: fixture.home, port: 0, diagnose })
+  try {
+    const bootstrap = await fetch(`${lifeboat.url}api/bootstrap`).then(response => response.json())
+    const headers = { 'Content-Type': 'application/json', 'X-Lifeboat-Token': bootstrap.token }
+    let job = await fetch(`${lifeboat.url}api/jobs`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ home: fixture.home, profile: fixture.profile }),
+    }).then(response => response.json())
+    for (let attempt = 0; attempt < 80 && ['queued', 'running'].includes(job.status); attempt += 1) {
+      await new Promise(resolve => setTimeout(resolve, 10))
+      job = await fetch(`${lifeboat.url}api/jobs/${job.id}`).then(response => response.json())
+    }
+    await writeFile(join(fixture.profileDir, 'safe.txt'), 'changed-after-diagnosis\n')
+    const response = await fetch(`${lifeboat.url}api/jobs/${job.id}/apply`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ planId: 'recovery-1' }),
+    })
+    assert.equal(response.status, 409)
+    assert.match((await response.json()).error, /inputs changed after diagnosis/)
+    assert.equal((await readProfile(fixture.home, fixture.profile)).hash, original.hash)
   } finally {
     await lifeboat.close()
     await fixture.cleanup()
