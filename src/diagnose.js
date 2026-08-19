@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { classifyBundles, readProfile } from './manifest.js'
 import { runProbe, validateProbeTiming } from './probe.js'
 import { findRecoveryPlans } from './recovery-search.js'
-import { createProbeWorkspace } from './workspace.js'
+import { createProbeSnapshot } from './workspace.js'
 
 function abortError() {
   const error = new Error('Diagnosis cancelled.')
@@ -126,6 +126,9 @@ export async function diagnoseProfile(options, dependencies = {}) {
     recovery: undefined,
   }
   emit({ type: 'diagnosis-started', reportId: report.id, profile: profile.profile })
+  const warn = message => {
+    if (!report.warnings.includes(message)) report.warnings.push(message)
+  }
   const maxCandidateBundles = options.maxCandidateBundles ?? 128
   if (suspects.length > maxCandidateBundles) {
     report.status = 'completed'
@@ -139,13 +142,22 @@ export async function diagnoseProfile(options, dependencies = {}) {
     return report
   }
 
+  let snapshot
+  try {
+    snapshot = await createProbeSnapshot(profile, options)
+    report.profile.inputFingerprint = snapshot.fingerprint
+    for (const warning of snapshot.warnings) warn(warning)
+  } catch (error) {
+    report.status = 'failed'
+    report.finishedAt = new Date().toISOString()
+    report.error = error.message
+    emit({ type: 'diagnosis-failed', status: report.status, error: error.message })
+    throw Object.assign(error, { report })
+  }
+
   const cache = new Map()
   let probeIndex = 0
   const confirmations = options.mode === 'boot' ? options.bootConfirmations ?? 2 : 1
-
-  const warn = message => {
-    if (!report.warnings.includes(message)) report.warnings.push(message)
-  }
 
   const compose = selected => {
     const active = new Set([...protectedBundles, ...selected])
@@ -165,7 +177,7 @@ export async function diagnoseProfile(options, dependencies = {}) {
     const attempts = []
     for (let attempt = 1; attempt <= confirmations; attempt += 1) {
       if (options.signal?.aborted) throw abortError()
-      const workspace = await createProbeWorkspace(profile, options)
+      const workspace = await snapshot.createWorkspace()
       for (const warning of workspace.warnings) warn(warning)
       if (options.keepArtifacts) {
         report.artifactPaths ??= []
@@ -294,6 +306,7 @@ export async function diagnoseProfile(options, dependencies = {}) {
       plans,
       search: searchResult.search,
       manifestHash: profile.hash,
+      inputFingerprintHash: snapshot.fingerprint.hash,
       note: exact
         ? 'Every smaller removal cardinality was tested. Installed dependencies are retained.'
         : 'This verified plan is 1-minimal but may not be the globally smallest removal. Installed dependencies are retained.',
@@ -366,6 +379,27 @@ export async function diagnoseProfile(options, dependencies = {}) {
         }
       }
     }
+    try {
+      const current = await snapshot.readCurrentFingerprint()
+      if (current.fingerprint.hash !== snapshot.fingerprint.hash) {
+        report.profile.currentInputFingerprint = current.fingerprint
+        warn('Profile inputs changed while diagnosis was running; automatic recovery was withheld.')
+        report.finding = {
+          code: 'inputs-changed',
+          title: 'Profile inputs changed during diagnosis',
+          summary: 'The manifest, user patches, copied profile assets, or package-resolution identity no longer matches the immutable probe snapshot. Run a fresh diagnosis before applying recovery.',
+        }
+        report.recovery = undefined
+      }
+    } catch (error) {
+      warn(`Could not revalidate live Profile inputs after diagnosis: ${error.message}`)
+      report.finding = {
+        code: 'inputs-changed',
+        title: 'Profile inputs could not be revalidated',
+        summary: 'Lifeboat could not prove that the live Profile still matches the probe snapshot, so automatic recovery was withheld.',
+      }
+      report.recovery = undefined
+    }
     report.status = 'completed'
     report.finishedAt = new Date().toISOString()
     emit({ type: 'diagnosis-finished', finding: report.finding })
@@ -389,5 +423,11 @@ export async function diagnoseProfile(options, dependencies = {}) {
     emit({ type: 'diagnosis-failed', status: report.status, error: error.message })
     if (error.name === 'AbortError') return report
     throw Object.assign(error, { report })
+  } finally {
+    try {
+      await snapshot.cleanup()
+    } catch (error) {
+      warn(`Probe snapshot cleanup failed: ${error.message}`)
+    }
   }
 }

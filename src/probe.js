@@ -138,9 +138,40 @@ function waitForExit(child, timeoutMs) {
   })
 }
 
+function processGroupIsAlive(pid) {
+  try {
+    process.kill(-pid, 0)
+    return true
+  } catch (error) {
+    if (error.code === 'ESRCH') return false
+    throw error
+  }
+}
+
+function signalProcessGroup(pid, signal) {
+  try {
+    process.kill(-pid, signal)
+    return true
+  } catch (error) {
+    if (error.code === 'ESRCH') return false
+    throw error
+  }
+}
+
+async function waitForProcessGroupExit(pid, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  while (processGroupIsAlive(pid)) {
+    const remaining = deadline - Date.now()
+    if (remaining <= 0) return false
+    await new Promise(resolve => setTimeout(resolve, Math.min(25, remaining)))
+  }
+  return true
+}
+
 async function terminateChild(child) {
-  if (!child.pid || child.exitCode !== null || child.signalCode !== null) return
+  if (!child.pid) return
   if (process.platform === 'win32') {
+    if (child.exitCode !== null || child.signalCode !== null) return
     const killer = spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], {
       stdio: 'ignore',
       windowsHide: true,
@@ -150,13 +181,15 @@ async function terminateChild(child) {
       child.kill('SIGKILL')
       await waitForExit(child, 1_500)
     }
-  } else {
-    child.kill('SIGTERM')
-    await waitForExit(child, 1_500)
-    if (child.exitCode === null && child.signalCode === null) {
-      child.kill('SIGKILL')
-      await waitForExit(child, 1_500)
+  } else if (processGroupIsAlive(child.pid)) {
+    signalProcessGroup(child.pid, 'SIGTERM')
+    if (!await waitForProcessGroupExit(child.pid, 1_500)) {
+      signalProcessGroup(child.pid, 'SIGKILL')
+      if (!await waitForProcessGroupExit(child.pid, 1_500)) {
+        throw new Error(`Could not terminate owned probe process group ${child.pid}.`)
+      }
     }
+    await waitForExit(child, 500)
   }
   if (child.exitCode === null && child.signalCode === null) {
     child.stdout?.destroy()
@@ -202,6 +235,7 @@ export function runProbe(options) {
 
     const child = spawn(launch.command, launch.args, {
       cwd,
+      detached: process.platform !== 'win32',
       env: launch.env,
       shell: false,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -255,7 +289,7 @@ export function runProbe(options) {
     }
 
     child.once('error', error => {
-      void finish({ status: 'fail', reason: `spawn-error: ${error.message}` })
+      void finish({ status: 'fail', reason: `spawn-error: ${error.message}` }, true)
     })
     child.once('exit', (code, childSignal) => {
       if (finalizing) return
@@ -265,7 +299,7 @@ export function runProbe(options) {
         reason: passed ? 'clean-exit' : (mode === 'boot' && code === 0 ? 'early-exit' : 'nonzero-exit'),
         exitCode: code,
         signal: childSignal,
-      })
+      }, process.platform !== 'win32')
     })
 
     overallTimer = setTimeout(() => {
