@@ -5,6 +5,27 @@ import { delimiter, extname, isAbsolute, join } from 'node:path'
 
 const SENSITIVE_ENV_NAME = /(KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL|COOKIE|AUTH)/i
 const DEFAULT_OUTPUT_LIMIT = 128 * 1024
+const TERMINATION_GRACE_MS = 250
+
+/** Validate and materialize the timing contract shared by every probe entry point. */
+export function validateProbeTiming(options = {}) {
+  const mode = options.mode ?? 'config'
+  if (!['config', 'boot'].includes(mode)) {
+    throw new Error('Probe mode must be "config" or "boot".')
+  }
+  const timeoutMs = options.timeoutMs ?? (mode === 'config' ? 60_000 : 20_000)
+  const successWindowMs = options.successWindowMs ?? 8_000
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1) {
+    throw new Error('timeoutMs must be a positive integer.')
+  }
+  if (!Number.isInteger(successWindowMs) || successWindowMs < 1) {
+    throw new Error('successWindowMs must be a positive integer.')
+  }
+  if (mode === 'boot' && successWindowMs + TERMINATION_GRACE_MS > timeoutMs) {
+    throw new Error(`successWindowMs must leave at least ${TERMINATION_GRACE_MS}ms before timeoutMs for probe termination.`)
+  }
+  return { mode, timeoutMs, successWindowMs }
+}
 
 /** Remove ambient credential-like variables before running untrusted plugins. */
 export function scrubEnvironment(env = process.env) {
@@ -160,6 +181,7 @@ export function runProbe(options) {
     outputLimit = DEFAULT_OUTPUT_LIMIT,
     signal,
   } = options
+  validateProbeTiming({ mode, timeoutMs, successWindowMs })
   const args = mode === 'config'
     ? [...commandArgs, '--profile', profile, '--dump-config']
     : [...commandArgs, '--profile', profile, ...bootArgs]
@@ -237,10 +259,10 @@ export function runProbe(options) {
     })
     child.once('exit', (code, childSignal) => {
       if (finalizing) return
-      const passed = code === 0
+      const passed = mode === 'config' && code === 0
       void finish({
         status: passed ? 'pass' : 'fail',
-        reason: passed ? 'clean-exit' : 'nonzero-exit',
+        reason: passed ? 'clean-exit' : (mode === 'boot' && code === 0 ? 'early-exit' : 'nonzero-exit'),
         exitCode: code,
         signal: childSignal,
       })
@@ -254,7 +276,7 @@ export function runProbe(options) {
     if (mode === 'boot') {
       successTimer = setTimeout(() => {
         void finish({ status: 'pass', reason: 'boot-window-survived' }, true)
-      }, Math.min(successWindowMs, timeoutMs - 250))
+      }, successWindowMs)
       successTimer.unref?.()
     }
   })

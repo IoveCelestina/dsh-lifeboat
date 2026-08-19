@@ -45,6 +45,34 @@ test('runtime probe accepts a process that survives the startup window', async (
   assert.equal(result.reason, 'boot-window-survived')
 })
 
+test('runtime probe rejects a clean exit before the startup window', async () => {
+  const result = await runProbe({
+    command: process.execPath,
+    commandArgs: ['-e', 'process.exit(0)', '--'],
+    home: process.cwd(),
+    profile: 'fixture',
+    cwd: process.cwd(),
+    mode: 'boot',
+    timeoutMs: 4_000,
+    successWindowMs: 500,
+  })
+  assert.equal(result.status, 'fail')
+  assert.equal(result.reason, 'early-exit')
+  assert.equal(result.exitCode, 0)
+})
+
+test('runtime probe refuses to shorten an impossible startup window', () => {
+  assert.throws(() => runProbe({
+    command: process.execPath,
+    home: process.cwd(),
+    profile: 'fixture',
+    cwd: process.cwd(),
+    mode: 'boot',
+    timeoutMs: 1_000,
+    successWindowMs: 751,
+  }), /leave at least 250ms/)
+})
+
 test('Windows batch shims run without enabling an interpolating shell command', { skip: process.platform !== 'win32' }, async () => {
   const root = await mkdtemp(join(tmpdir(), 'dsh-lifeboat-cmd-test-'))
   const shim = join(root, 'mock-dsh.cmd')
