@@ -470,6 +470,7 @@ export async function createLifeboatServer(options = {}) {
               home: job.report.options.home,
               profile: job.report.options.profile,
               backupName: basename(job.recoveryApplied.backupPath),
+              expectedBackupHash: job.recoveryApplied.backupHash,
               expectedManifestHash: job.recoveryApplied.currentManifestHash,
             })
             await persistJob(job)

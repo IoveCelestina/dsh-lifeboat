@@ -6,7 +6,7 @@ import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 
 const EMPTY_PATCH = '[]\n'
 const EXCLUDED_PROFILE_ENTRIES = new Set([
-  '.git', '.lifeboat-backups', 'node_modules', 'package.json', 'cordis.patch.yml',
+  '.dsh-lifeboat-recovery.lock', '.git', '.lifeboat-backups', 'node_modules', 'package.json', 'cordis.patch.yml',
 ])
 const EXCLUDED_NESTED_ENTRIES = new Set(['.git', '.lifeboat-backups', 'node_modules'])
 const SENSITIVE_ASSET_NAME = /^(?:\.env(?:\..*)?|\.npmrc|\.yarnrc(?:\.yml)?|\.credentials(?:\..*)?|credentials(?:\..*)?|settings\.ya?ml|auth(?:entication)?(?:\..*)?|tokens?(?:\..*)?|secrets?(?:\..*)?)$/i

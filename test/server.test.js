@@ -209,6 +209,15 @@ test('applies only the recovery plan selected from the verified report', async (
     })
     assert.equal(repeated.status, 409)
     assert.deepEqual((await readProfile(fixture.home, fixture.profile)).bundles, updated.bundles)
+
+    const restored = await fetch(`${lifeboat.url}api/jobs/${job.id}/restore`, {
+      method: 'POST',
+      headers,
+      body: '{}',
+    }).then(response => response.json())
+    assert.equal(restored.backupHash, original.hash)
+    assert.equal(restored.currentManifestHash, original.hash)
+    assert.deepEqual((await readProfile(fixture.home, fixture.profile)).bundles, original.bundles)
   } finally {
     await lifeboat.close()
     await fixture.cleanup()
